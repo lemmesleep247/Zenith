@@ -93,13 +93,10 @@ jobs:
       # --------------------------------------------------
       - name: Build release APK
         env:
-          VERSION: ${{ inputs.version }}
-
           KEYSTORE_FILE: ${{ github.workspace }}/release.keystore
           KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
-
         run: |
           ./gradlew assembleRelease \
             -Pandroid.injected.signing.store.file="$KEYSTORE_FILE" \
@@ -113,14 +110,18 @@ jobs:
       - name: Find APK
         id: apk
         run: |
-          APK=$(find app/build/outputs/apk/release -type f -name "*.apk" | head -n 1)
+          echo "Searching for APK..."
+
+          find app/build/outputs/apk -type f -name "*.apk" -print
+
+          APK=$(find app/build/outputs/apk -type f -name "*.apk" | head -n 1)
 
           if [ -z "$APK" ]; then
             echo "❌ No APK found."
             exit 1
           fi
 
-          echo "Found APK: $APK"
+          echo "✅ Found APK: $APK"
           echo "path=$APK" >> "$GITHUB_OUTPUT"
 
       # --------------------------------------------------
@@ -136,6 +137,8 @@ jobs:
           cp "${{ steps.apk.outputs.path }}" "$NEW_NAME"
 
           echo "name=$NEW_NAME" >> "$GITHUB_OUTPUT"
+
+          echo "✅ APK renamed to $NEW_NAME"
 
       # --------------------------------------------------
       # Remove keystore
