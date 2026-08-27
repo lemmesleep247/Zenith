@@ -1,0 +1,179 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (example: 1.0.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+
+    steps:
+      # --------------------------------------------------
+      # Validate version
+      # --------------------------------------------------
+      - name: Validate version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "❌ Invalid version: $VERSION"
+            echo "Version must follow the format: 1.0.0"
+            exit 1
+          fi
+
+          echo "✅ Version: $VERSION"
+
+      # --------------------------------------------------
+      # Checkout
+      # --------------------------------------------------
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # --------------------------------------------------
+      # Check whether tag already exists
+      # --------------------------------------------------
+      - name: Check existing tag
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          TAG="v${VERSION}"
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null 2>&1; then
+            echo "❌ Tag $TAG already exists."
+            echo "Choose a different version."
+            exit 1
+          fi
+
+          echo "✅ Tag $TAG is available."
+
+      # --------------------------------------------------
+      # Java
+      # --------------------------------------------------
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      # --------------------------------------------------
+      # Android SDK
+      # --------------------------------------------------
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      # --------------------------------------------------
+      # Gradle
+      # --------------------------------------------------
+      - name: Make Gradle executable
+        run: chmod +x ./gradlew
+
+      # --------------------------------------------------
+      # Decode signing keystore
+      # --------------------------------------------------
+      - name: Decode release keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 --decode > "$GITHUB_WORKSPACE/release.keystore"
+
+      # --------------------------------------------------
+      # Build signed release APK
+      # --------------------------------------------------
+      - name: Build release APK
+        env:
+          VERSION: ${{ inputs.version }}
+
+          KEYSTORE_FILE: ${{ github.workspace }}/release.keystore
+          KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+
+        run: |
+          ./gradlew assembleRelease \
+            -Pandroid.injected.signing.store.file="$KEYSTORE_FILE" \
+            -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
+
+      # --------------------------------------------------
+      # Find APK
+      # --------------------------------------------------
+      - name: Find APK
+        id: apk
+        run: |
+          APK=$(find app/build/outputs/apk/release -type f -name "*.apk" | head -n 1)
+
+          if [ -z "$APK" ]; then
+            echo "❌ No APK found."
+            exit 1
+          fi
+
+          echo "Found APK: $APK"
+          echo "path=$APK" >> "$GITHUB_OUTPUT"
+
+      # --------------------------------------------------
+      # Rename APK
+      # --------------------------------------------------
+      - name: Rename APK
+        id: rename
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          NEW_NAME="Zenith-v${VERSION}.apk"
+
+          cp "${{ steps.apk.outputs.path }}" "$NEW_NAME"
+
+          echo "name=$NEW_NAME" >> "$GITHUB_OUTPUT"
+
+      # --------------------------------------------------
+      # Remove keystore
+      # --------------------------------------------------
+      - name: Remove keystore
+        if: always()
+        run: |
+          rm -f "$GITHUB_WORKSPACE/release.keystore"
+
+      # --------------------------------------------------
+      # Create Git tag
+      # --------------------------------------------------
+      - name: Create tag
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          TAG="v${VERSION}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
+
+          echo "✅ Created tag $TAG"
+
+      # --------------------------------------------------
+      # Create GitHub Release
+      # --------------------------------------------------
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          TAG="v${VERSION}"
+
+          gh release create "$TAG" \
+            "${{ steps.rename.outputs.name }}" \
+            --title "Zenith $TAG" \
+            --generate-notes \
+            --verify-tag
