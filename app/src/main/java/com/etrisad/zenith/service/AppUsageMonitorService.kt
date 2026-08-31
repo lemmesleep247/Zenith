@@ -2190,12 +2190,12 @@ class AppUsageMonitorService : Service() {
         if (prefs.bedtimeEnabled) {
             if (startMinutes <= endMinutes) {
                 if (currentDay in prefs.bedtimeDays) {
-                    active = currentMinutes in startMinutes..endMinutes
+                    active = currentMinutes in startMinutes until endMinutes
                 }
             } else {
                 if (currentDay in prefs.bedtimeDays && currentMinutes >= startMinutes) {
                     active = true
-                } else if (yesterdayDay in prefs.bedtimeDays && currentMinutes <= endMinutes) {
+                } else if (yesterdayDay in prefs.bedtimeDays && currentMinutes < endMinutes) {
                     active = true
                 }
             }
@@ -2268,12 +2268,12 @@ class AppUsageMonitorService : Service() {
         if (prefs.gracePeriodEnabled) {
             if (startMinutes <= endMinutes) {
                 if (currentDay in prefs.gracePeriodDays) {
-                    active = currentMinutes in startMinutes..endMinutes
+                    active = currentMinutes in startMinutes until endMinutes
                 }
             } else {
                 if (currentDay in prefs.gracePeriodDays && currentMinutes >= startMinutes) {
                     active = true
-                } else if (yesterdayDay in prefs.gracePeriodDays && currentMinutes <= endMinutes) {
+                } else if (yesterdayDay in prefs.gracePeriodDays && currentMinutes < endMinutes) {
                     active = true
                 }
             }
@@ -2299,9 +2299,9 @@ class AppUsageMonitorService : Service() {
         val currentlyActiveIds = mutableSetOf<Long>()
         for (ps in SharedMonitoringState.parsedSchedulesCache) {
             val isInInterval = if (ps.startMinutes <= ps.endMinutes) {
-                currentTotalMinutes in ps.startMinutes..ps.endMinutes
+                currentTotalMinutes in ps.startMinutes until ps.endMinutes
             } else {
-                currentTotalMinutes >= ps.startMinutes || currentTotalMinutes <= ps.endMinutes
+                currentTotalMinutes >= ps.startMinutes || currentTotalMinutes < ps.endMinutes
             }
             if (isInInterval) {
                 currentlyActiveIds.add(ps.id)

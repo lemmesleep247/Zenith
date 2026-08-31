@@ -18,6 +18,7 @@ import com.etrisad.zenith.data.repository.ShieldRepository
 import com.etrisad.zenith.data.local.database.DbLogBuffer
 import com.etrisad.zenith.data.preferences.UserPreferencesRepository
 import com.etrisad.zenith.data.model.IncentiveTier
+import com.etrisad.zenith.data.website.WebsiteRepository
 import com.etrisad.zenith.data.preferences.UserPreferences
 import com.etrisad.zenith.service.SharedMonitoringState
 import com.etrisad.zenith.service.UsageSyncManager
@@ -111,6 +112,12 @@ data class HomeUiState(
     val bonusUsesLeft: Int = 0
 )
 
+enum class StatsRange(val days: Int, val label: String) {
+    WEEKLY(7, "Weekly"),
+    MONTHLY(30, "Monthly"),
+    YEARLY(365, "Yearly")
+}
+
 @OptIn(kotlinx.coroutines.FlowPreview::class, ExperimentalCoroutinesApi::class)
 class HomeViewModel(
     context: Context,
@@ -122,6 +129,106 @@ class HomeViewModel(
 
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
+
+    private val _selectedStatsRange = MutableStateFlow(StatsRange.WEEKLY)
+    val selectedStatsRange: StateFlow<StatsRange> = _selectedStatsRange.asStateFlow()
+
+    private val _selectedPeriodOffset = MutableStateFlow(0)
+    val selectedPeriodOffset: StateFlow<Int> = _selectedPeriodOffset.asStateFlow()
+
+    fun selectStatsRange(range: StatsRange) {
+        _selectedStatsRange.value = range
+        _selectedPeriodOffset.value = 0
+    }
+    fun prevPeriod() { _selectedPeriodOffset.value = _selectedPeriodOffset.value + 1 }
+    fun nextPeriod() { if (_selectedPeriodOffset.value > 0) _selectedPeriodOffset.value = _selectedPeriodOffset.value - 1 }
+
+    fun getPeriodLabel(range: StatsRange, offset: Int): String {
+        val cal = java.util.Calendar.getInstance()
+        return when (range) {
+            StatsRange.WEEKLY -> {
+                cal.firstDayOfWeek = java.util.Calendar.MONDAY
+                cal.set(java.util.Calendar.DAY_OF_WEEK, java.util.Calendar.MONDAY)
+                cal.add(java.util.Calendar.WEEK_OF_YEAR, -offset)
+                val start = cal.time
+                cal.add(java.util.Calendar.DAY_OF_YEAR, 6)
+                val end = cal.time
+                val fmt = java.text.SimpleDateFormat("d MMM", java.util.Locale.getDefault())
+                if (offset == 0) "This week" else "${fmt.format(start)} - ${fmt.format(end)}"
+            }
+            StatsRange.MONTHLY -> {
+                cal.set(java.util.Calendar.DAY_OF_MONTH, 1)
+                cal.add(java.util.Calendar.MONTH, -offset)
+                val fmt = java.text.SimpleDateFormat("MMMM yyyy", java.util.Locale.getDefault())
+                if (offset == 0) "This month" else fmt.format(cal.time)
+            }
+            StatsRange.YEARLY -> {
+                cal.set(java.util.Calendar.DAY_OF_YEAR, 1)
+                cal.add(java.util.Calendar.YEAR, -offset)
+                val fmt = java.text.SimpleDateFormat("yyyy", java.util.Locale.getDefault())
+                fmt.format(cal.time)
+            }
+        }
+    }
+
+    private fun getDateRangeForPeriod(range: StatsRange, offset: Int): Pair<String, String> {
+        val cal = java.util.Calendar.getInstance()
+        val fmt = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+        return when (range) {
+            StatsRange.WEEKLY -> {
+                cal.firstDayOfWeek = java.util.Calendar.MONDAY
+                cal.set(java.util.Calendar.DAY_OF_WEEK, java.util.Calendar.MONDAY)
+                cal.add(java.util.Calendar.WEEK_OF_YEAR, -offset)
+                val start = fmt.format(cal.time)
+                cal.add(java.util.Calendar.DAY_OF_YEAR, 6)
+                val end = fmt.format(cal.time)
+                start to end
+            }
+            StatsRange.MONTHLY -> {
+                cal.set(java.util.Calendar.DAY_OF_MONTH, 1)
+                cal.add(java.util.Calendar.MONTH, -offset)
+                val start = fmt.format(cal.time)
+                cal.set(java.util.Calendar.DAY_OF_MONTH, cal.getActualMaximum(java.util.Calendar.DAY_OF_MONTH))
+                val end = fmt.format(cal.time)
+                start to end
+            }
+            StatsRange.YEARLY -> {
+                cal.set(java.util.Calendar.DAY_OF_YEAR, 1)
+                cal.add(java.util.Calendar.YEAR, -offset)
+                val start = fmt.format(cal.time)
+                cal.set(java.util.Calendar.MONTH, 11)
+                cal.set(java.util.Calendar.DAY_OF_MONTH, 31)
+                val end = fmt.format(cal.time)
+                start to end
+            }
+        }
+    }
+
+    fun getLongTermAppUsage(range: StatsRange): Flow<List<AppUsageInfo>> {
+        return getLongTermAppUsage(range, 0)
+    }
+
+    fun getLongTermAppUsage(range: StatsRange, offset: Int): Flow<List<AppUsageInfo>> {
+        val (startDate, endDate) = getDateRangeForPeriod(range, offset)
+        return shieldRepository.getLongTermUsage(400).map { entities ->
+            val filtered = entities.filter { it.date in startDate..endDate && it.packageName !in setOf("TOTAL", "SHIELD_TOTAL", "GOAL_TOTAL", "OTHER_TOTAL") }
+            val grouped = filtered.groupBy { it.packageName }.mapValues { (_, list) -> list.sumOf { it.usageTimeMillis } }
+            grouped.entries.sortedByDescending { it.value }.map { (pkg, total) ->
+                val label = appInfoCache[pkg] ?: try {
+                    val info = context.packageManager.getApplicationInfo(pkg, 0)
+                    val name = context.packageManager.getApplicationLabel(info).toString()
+                    appInfoCache[pkg] = name
+                    name
+                } catch (_: Exception) {
+                    if (com.etrisad.zenith.data.website.WebsiteRepository.isWebsitePackageName(pkg)) {
+                        val domain = com.etrisad.zenith.data.website.WebsiteRepository.extractDomainFromPackageName(pkg)
+                        com.etrisad.zenith.data.website.WebsiteRepository.getDisplayName(domain, "https://$domain")
+                    } else pkg
+                }
+                AppUsageInfo(pkg, label, total)
+            }
+        }.flowOn(Dispatchers.Default)
+    }
 
     private val appInfoCache = java.util.concurrent.ConcurrentHashMap<String, String>()
     private var refreshJob: Job? = null
@@ -1467,6 +1574,7 @@ class HomeViewModel(
     }
 
     fun formatDuration(millis: Long): String = shieldOperationsManager.formatDuration(millis)
+    fun formatLongDuration(millis: Long): String = shieldOperationsManager.formatLongDuration(millis)
 
     fun onVisibleWeekChanged(pageIndex: Int) {
         viewModelScope.launch {
