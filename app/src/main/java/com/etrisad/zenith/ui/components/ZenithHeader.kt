@@ -35,11 +35,11 @@ fun ZenithHeader(
     isNavRailVisible: Boolean = false,
     userName: String = "User",
     categoryName: String? = null,
+    pausePointTypeName: String? = null,
     onBack: () -> Unit,
     navigationIcon: @Composable (() -> Unit)? = null,
     showInfoButton: Boolean = false,
     onInfoClick: () -> Unit = {},
-    infoFadeOnly: Boolean = false,
     infoNextToAction: Boolean = false,
     actions: @Composable RowScope.() -> Unit = {}
 ) {
@@ -60,6 +60,7 @@ fun ZenithHeader(
         currentRoute == Screen.Pomodoro.route ||
         currentRoute == Screen.PausePoint.route ||
         currentRoute == Screen.PausePointQr.route ||
+        currentRoute?.startsWith("pause_point_type") == true ||
         currentRoute?.startsWith("settings_category") == true ||
         currentRoute?.startsWith("app_detail") == true
 
@@ -155,6 +156,8 @@ fun ZenithHeader(
                 currentRoute == Screen.Pomodoro.route -> "Pomodoro"
                 currentRoute == Screen.PausePoint.route -> "Pause Point"
                 currentRoute == Screen.PausePointQr.route -> "QR Codes"
+                currentRoute?.startsWith("pause_point_type") == true ->
+                    pausePointTypeName?.ifEmpty { null } ?: "Pause Point"
                 currentRoute?.startsWith("settings_category") == true -> {
                     val raw = categoryName ?: ""
                     when (raw.lowercase()) {
@@ -296,47 +299,54 @@ fun ZenithHeader(
             Row(
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                // Info button keeps a stable identity across routes: it only
+                // fades/scales/expands when appearing or disappearing, never
+                // re-animates on route change. This keeps it anchored while the
+                // trailing switch slot expands/collapses beside it, so there is
+                // no sudden jump and no empty gap.
                 AnimatedVisibility(
                     visible = showInfoButton,
-                    enter = fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)),
-                    exit = fadeOut(animationSpec = spring(stiffness = Spring.StiffnessMediumLow))
-                ) {
-                    AnimatedContent(
-                        targetState = currentRoute to infoFadeOnly,
-                        transitionSpec = {
-                            if (targetState.second) {
-                                fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) togetherWith
-                                        fadeOut(animationSpec = spring(stiffness = Spring.StiffnessMediumLow))
-                            } else {
-                                (fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) +
-                                        scaleIn(
-                                            initialScale = 0.7f,
-                                            animationSpec = spring(
-                                                dampingRatio = Spring.DampingRatioLowBouncy,
-                                                stiffness = Spring.StiffnessMediumLow
-                                            )
-                                        ) +
-                                        slideInHorizontally(initialOffsetX = { it / 2 }, animationSpec = spring(stiffness = Spring.StiffnessMediumLow)))
-                                    .togetherWith(
-                                        fadeOut(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) +
-                                                scaleOut(targetScale = 0.7f, animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) +
-                                                slideOutHorizontally(targetOffsetX = { it / 2 }, animationSpec = spring(stiffness = Spring.StiffnessMediumLow))
-                                    )
-                            }
-                        },
-                        label = "HeaderInfoButtonAnimation",
-                        modifier = Modifier.offset(x = infoButtonOffset)
-                    ) { _ ->
-                        IconButton(
-                            onClick = onInfoClick,
-                            modifier = Modifier.clip(CircleShape)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.Info,
-                                contentDescription = "Screen info",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    enter = fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) +
+                            scaleIn(
+                                initialScale = 0.7f,
+                                animationSpec = spring(
+                                    dampingRatio = Spring.DampingRatioLowBouncy,
+                                    stiffness = Spring.StiffnessMediumLow
+                                )
+                            ) +
+                            slideInHorizontally(
+                                initialOffsetX = { it / 2 },
+                                animationSpec = spring(stiffness = Spring.StiffnessMediumLow)
+                            ) +
+                            expandHorizontally(
+                                expandFrom = Alignment.End,
+                                animationSpec = spring(stiffness = Spring.StiffnessMediumLow)
+                            ),
+                    exit = fadeOut(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) +
+                            scaleOut(
+                                targetScale = 0.7f,
+                                animationSpec = spring(stiffness = Spring.StiffnessMediumLow)
+                            ) +
+                            slideOutHorizontally(
+                                targetOffsetX = { it / 2 },
+                                animationSpec = spring(stiffness = Spring.StiffnessMediumLow)
+                            ) +
+                            shrinkHorizontally(
+                                shrinkTowards = Alignment.End,
+                                animationSpec = spring(stiffness = Spring.StiffnessMediumLow)
                             )
-                        }
+                ) {
+                    IconButton(
+                        onClick = onInfoClick,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .offset(x = infoButtonOffset)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Info,
+                            contentDescription = "Screen info",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
                 actions()
