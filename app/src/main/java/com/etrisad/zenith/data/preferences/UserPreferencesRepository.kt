@@ -246,6 +246,18 @@ class UserPreferencesRepository(private val context: Context) {
         val GRACE_PERIOD_DAYS = stringPreferencesKey("grace_period_days")
         val GRACE_PERIOD_LAST_EDIT_TIMESTAMP = longPreferencesKey("grace_period_last_edit_timestamp")
         val USER_NAME = stringPreferencesKey("user_name")
+        val USER_BIO = stringPreferencesKey("user_bio")
+        val USER_AVATAR_URI = stringPreferencesKey("user_avatar_uri")
+        val USER_BANNER_URI = stringPreferencesKey("user_banner_uri")
+        val PROFILE_BANNER_ON_HOME = booleanPreferencesKey("profile_banner_on_home")
+        val USER_SHARED_PROFILE = booleanPreferencesKey("user_shared_profile")
+        val INFO_VISITED_ROUTES = stringPreferencesKey("info_visited_routes")
+        val LIFETIME_SNAPSHOT = stringPreferencesKey("lifetime_snapshot")
+        val LIFETIME_LAST_SYNC_DATE = stringPreferencesKey("lifetime_last_sync_date")
+        val ACHIEVEMENT_HISTORY = stringPreferencesKey("achievement_history")
+        val USER_XP_HISTORY = stringPreferencesKey("user_xp_history")
+        val ACHIEVEMENT_LAST_VALUES = stringPreferencesKey("achievement_last_values")
+        val ACHIEVEMENT_DAILY_COUNTS = stringPreferencesKey("achievement_daily_counts")
         val EARLY_KICK_ENABLED = booleanPreferencesKey("early_kick_enabled")
         val INTERCEPT_AUDIO_FOCUS_ENABLED = booleanPreferencesKey("intercept_audio_focus_enabled")
         val SHOW_DATABASE_INDICATOR = booleanPreferencesKey("show_database_indicator")
@@ -396,6 +408,9 @@ class UserPreferencesRepository(private val context: Context) {
         val POMODORO_BREAK_END_TIMESTAMP = longPreferencesKey("pomodoro_break_end_timestamp")
         val POMODORO_NEXT_BREAK_ALLOWED_TIMESTAMP = longPreferencesKey("pomodoro_next_break_allowed_timestamp")
         val POMODORO_CURRENT_SESSION_NUMBER = intPreferencesKey("pomodoro_current_session_number")
+        val USER_XP_TOTAL = longPreferencesKey("user_xp_total")
+        val USER_XP_LAST_AWARD_DATE = stringPreferencesKey("user_xp_last_award_date")
+        val USER_TOTAL_SAVED_MILLIS = longPreferencesKey("user_total_saved_millis")
     }
 
     val userPreferencesFlow: Flow<UserPreferences> = combine(
@@ -452,6 +467,22 @@ class UserPreferencesRepository(private val context: Context) {
             bedtimeBestStreak = runtime[RuntimeKeys.BEDTIME_BEST_STREAK] ?: 0,
             bedtimeStreakResetDate = runtime[RuntimeKeys.BEDTIME_STREAK_RESET_DATE] ?: "",
             userName = settings[PreferencesKeys.USER_NAME] ?: "User",
+            userBio = settings[PreferencesKeys.USER_BIO] ?: "",
+            userAvatarUri = settings[PreferencesKeys.USER_AVATAR_URI] ?: "",
+            userBannerUri = settings[PreferencesKeys.USER_BANNER_URI] ?: "",
+            profileBannerOnHome = settings[PreferencesKeys.PROFILE_BANNER_ON_HOME] ?: false,
+            userSharedProfile = settings[PreferencesKeys.USER_SHARED_PROFILE] ?: false,
+            infoVisitedRoutes = settings[PreferencesKeys.INFO_VISITED_ROUTES]
+                ?.split(",")?.filter { it.isNotEmpty() }?.toSet() ?: emptySet(),
+            lifetimeSnapshot = settings[PreferencesKeys.LIFETIME_SNAPSHOT] ?: "",
+            lifetimeLastSyncDate = settings[PreferencesKeys.LIFETIME_LAST_SYNC_DATE] ?: "",
+            achievementHistory = settings[PreferencesKeys.ACHIEVEMENT_HISTORY] ?: "",
+            achievementLastValues = settings[PreferencesKeys.ACHIEVEMENT_LAST_VALUES] ?: "",
+            achievementDailyCounts = settings[PreferencesKeys.ACHIEVEMENT_DAILY_COUNTS] ?: "",
+            userXpTotal = runtime[RuntimeKeys.USER_XP_TOTAL] ?: 0L,
+            userXpLastAwardDate = runtime[RuntimeKeys.USER_XP_LAST_AWARD_DATE] ?: "",
+            userTotalSavedMillis = runtime[RuntimeKeys.USER_TOTAL_SAVED_MILLIS] ?: 0L,
+            userXpHistory = settings[PreferencesKeys.USER_XP_HISTORY] ?: "",
             earlyKickEnabled = settings[PreferencesKeys.EARLY_KICK_ENABLED] ?: false,
             interceptAudioFocusEnabled = settings[PreferencesKeys.INTERCEPT_AUDIO_FOCUS_ENABLED] ?: true,
             showDatabaseIndicator = settings[PreferencesKeys.SHOW_DATABASE_INDICATOR] ?: false,
@@ -692,6 +723,72 @@ class UserPreferencesRepository(private val context: Context) {
 
     suspend fun setUserName(name: String) {
         context.dataStore.edit { preferences -> preferences[PreferencesKeys.USER_NAME] = name }
+    }
+
+    suspend fun setUserBio(bio: String) {
+        context.dataStore.edit { preferences -> preferences[PreferencesKeys.USER_BIO] = bio }
+    }
+
+    suspend fun setUserAvatarUri(uri: String) {
+        context.dataStore.edit { preferences -> preferences[PreferencesKeys.USER_AVATAR_URI] = uri }
+    }
+
+    suspend fun setUserBannerUri(uri: String) {
+        context.dataStore.edit { preferences -> preferences[PreferencesKeys.USER_BANNER_URI] = uri }
+    }
+
+    suspend fun setProfileBannerOnHome(enabled: Boolean) {
+        context.dataStore.edit { preferences -> preferences[PreferencesKeys.PROFILE_BANNER_ON_HOME] = enabled }
+    }
+
+    suspend fun setUserSharedProfile(shared: Boolean) {
+        context.dataStore.edit { preferences -> preferences[PreferencesKeys.USER_SHARED_PROFILE] = shared }
+    }
+
+    suspend fun addInfoVisitedRoute(route: String) {
+        if (route.isBlank()) return
+        context.dataStore.edit { preferences ->
+            val current = preferences[PreferencesKeys.INFO_VISITED_ROUTES]
+                ?.split(",")?.filter { it.isNotEmpty() }?.toMutableSet() ?: mutableSetOf()
+            if (current.add(route)) {
+                preferences[PreferencesKeys.INFO_VISITED_ROUTES] = current.joinToString(",")
+            }
+        }
+    }
+
+    suspend fun setLifetimeSnapshot(snapshot: String, lastSyncDate: String) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.LIFETIME_SNAPSHOT] = snapshot
+            preferences[PreferencesKeys.LIFETIME_LAST_SYNC_DATE] = lastSyncDate
+        }
+    }
+
+    suspend fun setAchievementHistory(history: String) {
+        context.dataStore.edit { preferences -> preferences[PreferencesKeys.ACHIEVEMENT_HISTORY] = history }
+    }
+
+    suspend fun setAchievementLastValues(values: String) {
+        context.dataStore.edit { preferences -> preferences[PreferencesKeys.ACHIEVEMENT_LAST_VALUES] = values }
+    }
+
+    suspend fun setAchievementDailyCounts(counts: String) {
+        context.dataStore.edit { preferences -> preferences[PreferencesKeys.ACHIEVEMENT_DAILY_COUNTS] = counts }
+    }
+
+    suspend fun awardDailyXp(todayDate: String, xp: Int, savedMillis: Long) {
+        context.runtimeDataStore.edit { preferences ->
+            preferences[RuntimeKeys.USER_XP_TOTAL] = (preferences[RuntimeKeys.USER_XP_TOTAL] ?: 0L) + xp
+            preferences[RuntimeKeys.USER_XP_LAST_AWARD_DATE] = todayDate
+            preferences[RuntimeKeys.USER_TOTAL_SAVED_MILLIS] =
+                (preferences[RuntimeKeys.USER_TOTAL_SAVED_MILLIS] ?: 0L) + savedMillis
+        }
+        context.dataStore.edit { preferences ->
+            val raw = preferences[PreferencesKeys.USER_XP_HISTORY] ?: ""
+            val lines = raw.lines().filter { it.isNotBlank() }.toMutableList()
+            lines.removeAll { it.substringBefore('\t') == todayDate }
+            lines.add(0, "$todayDate\t$xp\t$savedMillis")
+            preferences[PreferencesKeys.USER_XP_HISTORY] = lines.take(30).joinToString("\n")
+        }
     }
 
     suspend fun setThemeConfig(themeConfig: ThemeConfig) {
@@ -1678,6 +1775,21 @@ data class UserPreferences(
     val gracePeriodDays: Set<Int> = setOf(1, 2, 3, 4, 5, 6, 7),
     val gracePeriodLastEditTimestamp: Long = 0L,
     val userName: String = "User",
+    val userBio: String = "",
+    val userAvatarUri: String = "",
+    val userBannerUri: String = "",
+    val profileBannerOnHome: Boolean = false,
+    val userSharedProfile: Boolean = false,
+    val infoVisitedRoutes: Set<String> = emptySet(),
+    val lifetimeSnapshot: String = "",
+    val lifetimeLastSyncDate: String = "",
+    val achievementHistory: String = "",
+    val achievementLastValues: String = "",
+    val achievementDailyCounts: String = "",
+    val userXpTotal: Long = 0L,
+    val userXpLastAwardDate: String = "",
+    val userTotalSavedMillis: Long = 0L,
+    val userXpHistory: String = "",
     val earlyKickEnabled: Boolean = false,
     val interceptAudioFocusEnabled: Boolean = true,
     val showDatabaseIndicator: Boolean = false,

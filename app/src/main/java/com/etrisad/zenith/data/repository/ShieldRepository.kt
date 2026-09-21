@@ -138,6 +138,48 @@ class ShieldRepository(
         return dailyUsageDao.getUsagesForDate(date)
     }
 
+    suspend fun getDailyUsagesSinceSync(sinceDate: String): List<DailyUsageEntity> {
+        return dailyUsageDao.getUsagesSince(sinceDate)
+    }
+
+    suspend fun getPomodoroTotalCount(): Int {
+        return try { database.pomodoroSessionDao().getTotalCount() } catch (_: Exception) { 0 }
+    }
+
+    suspend fun getWebsiteDomainCount(): Int {
+        return try { websiteUsageDao.getDistinctDomainCount() } catch (_: Exception) { 0 }
+    }
+
+    suspend fun getInterceptedNotificationCount(): Int {
+        return try { database.interceptedNotificationDao().getTotalCount() } catch (_: Exception) { 0 }
+    }
+
+    suspend fun getTrackedDayCount(): Int {
+        return try { dailyUsageDao.getDistinctDateCount() } catch (_: Exception) { 0 }
+    }
+
+    suspend fun getHourlyActiveDayCount(startHour: Int, endHour: Int): Int {
+        return try {
+            database.hourlyUsageDao().getActiveDatesInHourRange(startHour, endHour)
+        } catch (_: Exception) { 0 }
+    }
+
+    suspend fun getAllTrackedDates(): List<String> {
+        return try { dailyUsageDao.getDistinctDates() } catch (_: Exception) { emptyList() }
+    }
+
+    suspend fun getWebsiteTotalMillis(): Long {
+        return try { websiteUsageDao.getTotalMillis() } catch (_: Exception) { 0L }
+    }
+
+    fun getPomodoroTotalCountFlow(): Flow<Int> {
+        return database.pomodoroSessionDao().getTotalCountFlow()
+    }
+
+    suspend fun getPomodoroTotalFocusMillis(): Long {
+        return try { database.pomodoroSessionDao().getTotalFocusMillis() } catch (_: Exception) { 0L }
+    }
+
     fun getShieldByPackageNameFlow(packageName: String): Flow<ShieldEntity?> {
         return shieldDao.getShieldByPackageNameFlow(packageName)
     }
@@ -379,5 +421,20 @@ class ShieldRepository(
 
     fun getIncentiveTier(): Flow<IncentiveTier> {
         return getIncentiveGoalProgress().map { IncentiveTier.fromProgress(it) }
+    }
+
+    suspend fun recordPomodoroSession(date: String, focusMillis: Long, sessionNumber: Int) {
+        database.pomodoroSessionDao().insert(
+            com.etrisad.zenith.data.local.entity.PomodoroSessionEntity(
+                date = date,
+                completedAt = System.currentTimeMillis(),
+                focusMillis = focusMillis,
+                sessionNumber = sessionNumber
+            )
+        )
+    }
+
+    fun getPomodoroSessionsBetween(startDate: String, endDate: String): Flow<List<com.etrisad.zenith.data.local.entity.PomodoroSessionEntity>> {
+        return database.pomodoroSessionDao().getBetween(startDate, endDate)
     }
 }

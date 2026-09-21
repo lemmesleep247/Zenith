@@ -95,6 +95,9 @@ object SharedMonitoringState {
         windDownUsedPackages.entries.removeIf { it.value && now - startOfDay > 86400000L }
         if (dailyUsageCache.size > 100) dailyUsageCache.entries.removeIf { it.value <= 0L }
         if (systemAppCache.size > 200) systemAppCache.clear()
+        if (notifiedGoals.size > 500) notifiedGoals.clear()
+        if (lastKnownPackageUsage.size > 500) lastKnownPackageUsage.clear()
+        if (windDownUsedPackages.size > 500) windDownUsedPackages.clear()
     }
 
     val CRITICAL_SYSTEM_PACKAGES = setOf(

@@ -5,14 +5,18 @@ import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.automirrored.outlined.List
 import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.FreeBreakfast
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.Alarm
 import androidx.compose.material.icons.outlined.Bedtime
+import androidx.compose.material.icons.outlined.EmojiEvents
 import androidx.compose.material.icons.outlined.FreeBreakfast
 import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.PersonOutline
 import androidx.compose.material.icons.outlined.RemoveRedEye
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.Settings
@@ -72,6 +76,16 @@ sealed class Screen(
     object PausePointTypeSettings :
         Screen("pause_point_type/{type}", "Pause Point", Icons.Filled.Settings, Icons.Outlined.Settings) {
         fun createRoute(type: String) = "pause_point_type/$type"
+    }
+
+    object Profile :
+        Screen("profile", "Profile", Icons.Filled.Person, Icons.Outlined.PersonOutline)
+
+    object Achievements :
+        Screen("achievements?highlightId={highlightId}", "Achievements", Icons.Filled.EmojiEvents, Icons.Outlined.EmojiEvents) {
+        fun createRoute(highlightId: String? = null) =
+            if (highlightId.isNullOrBlank()) "achievements"
+            else "achievements?highlightId=$highlightId"
     }
 }
 

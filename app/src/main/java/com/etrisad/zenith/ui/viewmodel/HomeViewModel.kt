@@ -150,11 +150,6 @@ class HomeViewModel(
     fun prevPerAppPeriod() { _perAppPeriodOffset.value = _perAppPeriodOffset.value + 1 }
     fun nextPerAppPeriod() { if (_perAppPeriodOffset.value > 0) _perAppPeriodOffset.value = _perAppPeriodOffset.value - 1 }
     fun getPerAppPeriodLabel(range: StatsRange, offset: Int): String = getPeriodLabel(range, offset)
-
-    /**
-     * Date-range label for a long-term period, e.g. "12 – 18 Agu 2026".
-     * Used as the paging indicator since unlimited paging makes dots meaningless.
-     */
     fun getPeriodRangeLabel(range: StatsRange, offset: Int): String {
         val (startStr, endStr) = getDateRangeForPeriod(range, offset)
         val parser = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
@@ -205,11 +200,6 @@ class HomeViewModel(
             }
         }
     }
-
-    /**
-     * Every calendar day (00:00 millis) covered by a long-term period, oldest
-     * first, with no upper bound — backs the calendar heatmap grid.
-     */
     fun getPeriodDayMillis(range: StatsRange, offset: Int): List<Long> {
         val (startStr, endStr) = getDateRangeForPeriod(range, offset)
         val parser = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
@@ -241,8 +231,6 @@ class HomeViewModel(
     fun getLongTermAppUsage(range: StatsRange): Flow<List<AppUsageInfo>> {
         return getLongTermAppUsage(range, 0)
     }
-
-    /** Period total reusing the long-term aggregation (for prev-period delta). */
     fun getLongTermTotal(range: StatsRange, offset: Int): Flow<Long> {
         return getLongTermAppUsage(range, offset).map { list -> list.sumOf { it.totalTimeVisible } }
     }
@@ -449,7 +437,12 @@ class HomeViewModel(
                     old.bedtimeEnabled == new.bedtimeEnabled &&
                     old.bedtimeStartTime == new.bedtimeStartTime &&
                     old.bedtimeEndTime == new.bedtimeEndTime &&
-                    old.bedtimeDays == new.bedtimeDays
+                    old.bedtimeDays == new.bedtimeDays &&
+                    old.pomodoroEnabled == new.pomodoroEnabled &&
+                    old.pomodoroSessionEndTimestamp == new.pomodoroSessionEndTimestamp &&
+                    old.pomodoroBreakEndTimestamp == new.pomodoroBreakEndTimestamp &&
+                    old.pomodoroSessionDurationMinutes == new.pomodoroSessionDurationMinutes &&
+                    old.pomodoroBreakDurationMinutes == new.pomodoroBreakDurationMinutes
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), UserPreferences())
 

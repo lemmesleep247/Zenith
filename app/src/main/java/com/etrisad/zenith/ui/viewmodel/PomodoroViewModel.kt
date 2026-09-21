@@ -15,7 +15,9 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -49,7 +51,8 @@ data class PomodoroUiState(
 
 class PomodoroViewModel(
     private val context: Context,
-    private val userPreferencesRepository: UserPreferencesRepository
+    private val userPreferencesRepository: UserPreferencesRepository,
+    private val shieldRepository: com.etrisad.zenith.data.repository.ShieldRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(PomodoroUiState())
@@ -107,8 +110,12 @@ class PomodoroViewModel(
         startTimer()
     }
 
+    private var timerJob: Job? = null
+    private var suppressFocusRecord = false
+
     private fun startTimer() {
-        viewModelScope.launch {
+        if (timerJob?.isActive == true) return
+        timerJob = viewModelScope.launch {
             while (true) {
                 kotlinx.coroutines.delay(1000)
                 val now = System.currentTimeMillis()
@@ -117,14 +124,22 @@ class PomodoroViewModel(
                 val isBreak = isActive && state.breakEndTimestamp > now
                 val isPaused = isActive && SharedMonitoringState.isPomodoroPaused
                 val wasActive = state.isSessionActive
+                val prevFocusRemaining = state.remainingSessionMillis
+                val newFocusRemaining = if (isPaused) prevFocusRemaining else (state.sessionEndTimestamp - now).coerceAtLeast(0L)
                 _uiState.update {
                     it.copy(
                         remainingBreakMillis = if (isPaused) it.remainingBreakMillis else (state.breakEndTimestamp - now).coerceAtLeast(0L),
-                        remainingSessionMillis = if (isPaused) it.remainingSessionMillis else (state.sessionEndTimestamp - now).coerceAtLeast(0L),
+                        remainingSessionMillis = newFocusRemaining,
                         isSessionActive = isActive,
                         isBreakActive = isBreak,
                         isPaused = isPaused
                     )
+                }
+                if (!isPaused && prevFocusRemaining > 0L && newFocusRemaining == 0L &&
+                    state.sessionEndTimestamp > 0L
+                ) {
+                    if (suppressFocusRecord) suppressFocusRecord = false
+                    else recordFocusCompletion(state.currentSessionNumber)
                 }
                 if (wasActive && !isActive && !isBreak) {
                     onSessionCompleted()
@@ -134,6 +149,14 @@ class PomodoroViewModel(
                     SharedMonitoringState.isPomodoroActive = isActive
                     SharedMonitoringState.isPomodoroBlockingActive = newBlockingActive
                     SharedMonitoringState.isPomodoroBreakActive = isBreak
+                }
+                val fresh = _uiState.value
+                val idleNow = System.currentTimeMillis()
+                if (!fresh.isSessionActive && !fresh.isBreakActive &&
+                    fresh.sessionEndTimestamp <= idleNow && fresh.breakEndTimestamp <= idleNow
+                ) {
+                    timerJob = null
+                    return@launch
                 }
             }
         }
@@ -228,6 +251,7 @@ class PomodoroViewModel(
     fun getPresets(): Map<String, List<String>> = parsePresets(_uiState.value.presetsJson)
 
     fun startSession() {
+        suppressFocusRecord = false
         viewModelScope.launch {
             val prefs = userPreferencesRepository.userPreferencesFlow.first()
             userPreferencesRepository.setPomodoroCurrentSessionNumber(1)
@@ -242,10 +266,12 @@ class PomodoroViewModel(
             SharedMonitoringState.pomodoroPauseTimestamp = 0L
             SharedMonitoringState.pomodoroAllowedPackages = prefs.pomodoroAllowedPackages
             SharedMonitoringState.pomodoroBlockAllowedApps = prefs.pomodoroBlockAllowedApps
+            startTimer()
         }
     }
 
     fun endSession() {
+        suppressFocusRecord = true
         viewModelScope.launch {
             userPreferencesRepository.setPomodoroEnabled(false)
             userPreferencesRepository.setPomodoroSessionEndTimestamp(0L)
@@ -261,10 +287,27 @@ class PomodoroViewModel(
     }
 
     fun skipToNextSession() {
+        suppressFocusRecord = true
         viewModelScope.launch {
             val now = System.currentTimeMillis()
             userPreferencesRepository.setPomodoroSessionEndTimestamp(now)
             userPreferencesRepository.setPomodoroBreakEndTimestamp(now)
+        }
+    }
+    private fun recordFocusCompletion(sessionNumber: Int) {
+        viewModelScope.launch {
+            try {
+                val prefs = userPreferencesRepository.userPreferencesFlow.first()
+                val dateStr = com.etrisad.zenith.util.DateTimeUtils.getDayStartDateString(
+                    System.currentTimeMillis(), prefs.dayStartHour, prefs.dayStartMinute
+                )
+                shieldRepository.recordPomodoroSession(
+                    date = dateStr,
+                    focusMillis = prefs.pomodoroSessionDurationMinutes * 60000L,
+                    sessionNumber = sessionNumber
+                )
+            } catch (_: Exception) {
+            }
         }
     }
 
@@ -332,6 +375,130 @@ class PomodoroViewModel(
     fun onSearchQueryChange(query: String) {
         _uiState.update { it.copy(searchQuery = query) }
         loadInstalledApps()
+    }
+
+    data class PomodoroDayStat(
+        val dateMillis: Long,
+        val sessions: Int,
+        val focusMillis: Long
+    )
+
+    private val _pomodoroStatsRange = MutableStateFlow(StatsRange.MONTHLY)
+    val pomodoroStatsRange: kotlinx.coroutines.flow.StateFlow<StatsRange> = _pomodoroStatsRange.asStateFlow()
+    private val _pomodoroPeriodOffset = MutableStateFlow(0)
+    val pomodoroPeriodOffset: kotlinx.coroutines.flow.StateFlow<Int> = _pomodoroPeriodOffset.asStateFlow()
+
+    fun selectPomodoroStatsRange(range: StatsRange) {
+        _pomodoroStatsRange.value = range
+        _pomodoroPeriodOffset.value = 0
+    }
+
+    fun prevPomodoroPeriod() { _pomodoroPeriodOffset.value = _pomodoroPeriodOffset.value + 1 }
+    fun nextPomodoroPeriod() {
+        if (_pomodoroPeriodOffset.value > 0) _pomodoroPeriodOffset.value = _pomodoroPeriodOffset.value - 1
+    }
+
+    private fun getPomodoroDateRange(range: StatsRange, offset: Int): Pair<String, String> {
+        val cal = java.util.Calendar.getInstance()
+        val fmt = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+        return when (range) {
+            StatsRange.MONTHLY -> {
+                cal.set(java.util.Calendar.DAY_OF_MONTH, 1)
+                cal.add(java.util.Calendar.MONTH, -offset)
+                val start = fmt.format(cal.time)
+                cal.set(java.util.Calendar.DAY_OF_MONTH, cal.getActualMaximum(java.util.Calendar.DAY_OF_MONTH))
+                val end = fmt.format(cal.time)
+                start to end
+            }
+            else -> {
+                cal.set(java.util.Calendar.DAY_OF_YEAR, 1)
+                cal.add(java.util.Calendar.YEAR, -offset)
+                val start = fmt.format(cal.time)
+                cal.set(java.util.Calendar.MONTH, 11)
+                cal.set(java.util.Calendar.DAY_OF_MONTH, 31)
+                val end = fmt.format(cal.time)
+                start to end
+            }
+        }
+    }
+
+    fun getPomodoroPeriodLabel(range: StatsRange, offset: Int): String {
+        val cal = java.util.Calendar.getInstance()
+        return when (range) {
+            StatsRange.MONTHLY -> {
+                cal.set(java.util.Calendar.DAY_OF_MONTH, 1)
+                cal.add(java.util.Calendar.MONTH, -offset)
+                val fmt = java.text.SimpleDateFormat("MMMM yyyy", java.util.Locale.getDefault())
+                if (offset == 0) "This month" else fmt.format(cal.time)
+            }
+            else -> {
+                cal.set(java.util.Calendar.DAY_OF_YEAR, 1)
+                cal.add(java.util.Calendar.YEAR, -offset)
+                val fmt = java.text.SimpleDateFormat("yyyy", java.util.Locale.getDefault())
+                fmt.format(cal.time)
+            }
+        }
+    }
+
+    fun getPomodoroPeriodRangeLabel(range: StatsRange, offset: Int): String {
+        val (startStr, endStr) = getPomodoroDateRange(range, offset)
+        val parser = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+        val start = try { parser.parse(startStr)?.time ?: 0L } catch (_: Exception) { 0L }
+        val end = try { parser.parse(endStr)?.time ?: 0L } catch (_: Exception) { 0L }
+        if (start == 0L || end == 0L) return getPomodoroPeriodLabel(range, offset)
+        return com.etrisad.zenith.util.DateTimeUtils.formatDateRange(start, end)
+    }
+
+    fun getPomodoroPeriodDayMillis(range: StatsRange, offset: Int): List<Long> {
+        val (startStr, endStr) = getPomodoroDateRange(range, offset)
+        val parser = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+        val startDate = try { parser.parse(startStr) } catch (_: Exception) { null } ?: return emptyList()
+        val endDate = try { parser.parse(endStr) } catch (_: Exception) { null } ?: return emptyList()
+        if (endDate.before(startDate)) return emptyList()
+        val cal = java.util.Calendar.getInstance().apply {
+            time = startDate
+            set(java.util.Calendar.HOUR_OF_DAY, 0)
+            set(java.util.Calendar.MINUTE, 0)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        val endCal = java.util.Calendar.getInstance().apply {
+            time = endDate
+            set(java.util.Calendar.HOUR_OF_DAY, 0)
+            set(java.util.Calendar.MINUTE, 0)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        return buildList {
+            while (!cal.time.after(endCal.time)) {
+                add(cal.timeInMillis)
+                cal.add(java.util.Calendar.DAY_OF_YEAR, 1)
+            }
+        }
+    }
+
+    fun getPomodoroDailyStats(range: StatsRange, offset: Int): kotlinx.coroutines.flow.Flow<List<PomodoroDayStat>> {
+        val (startStr, endStr) = getPomodoroDateRange(range, offset)
+        val keyFmt = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.ENGLISH)
+        val dayKeys = getPomodoroPeriodDayMillis(range, offset).associateBy { keyFmt.format(java.util.Date(it)) }
+        return shieldRepository.getPomodoroSessionsBetween(startStr, endStr).map { sessions ->
+            val grouped = sessions.groupBy { it.date }
+            dayKeys.mapNotNull { (key, millis) ->
+                val daySessions = grouped[key] ?: return@mapNotNull null
+                PomodoroDayStat(
+                    dateMillis = millis,
+                    sessions = daySessions.size,
+                    focusMillis = daySessions.sumOf { it.focusMillis }
+                )
+            }
+        }
+    }
+
+    fun getPomodoroPeriodTotal(range: StatsRange, offset: Int): kotlinx.coroutines.flow.Flow<Long> {
+        val (startStr, endStr) = getPomodoroDateRange(range, offset)
+        return shieldRepository.getPomodoroSessionsBetween(startStr, endStr).map { sessions ->
+            sessions.sumOf { it.focusMillis }
+        }
     }
 
     private fun loadInstalledApps() {

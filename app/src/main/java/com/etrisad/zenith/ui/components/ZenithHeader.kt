@@ -62,15 +62,11 @@ fun ZenithHeader(
         currentRoute == Screen.PausePointQr.route ||
         currentRoute?.startsWith("pause_point_type") == true ||
         currentRoute?.startsWith("settings_category") == true ||
-        currentRoute?.startsWith("app_detail") == true
+        currentRoute?.startsWith("app_detail") == true ||
+        currentRoute == Screen.Profile.route ||
+        currentRoute == Screen.Achievements.route
 
     val sideSlotWidth = 68.dp
-
-    val infoButtonOffset by animateDpAsState(
-        targetValue = if (infoNextToAction) 8.dp else 0.dp,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "InfoButtonOffset"
-    )
 
     val smoothedAlpha by animateFloatAsState(
         targetValue = (1f - scrollBehavior.state.collapsedFraction).coerceIn(0f, 1f),
@@ -156,6 +152,8 @@ fun ZenithHeader(
                 currentRoute == Screen.Pomodoro.route -> "Pomodoro"
                 currentRoute == Screen.PausePoint.route -> "Pause Point"
                 currentRoute == Screen.PausePointQr.route -> "QR Codes"
+                currentRoute == Screen.Profile.route -> "Profile"
+                currentRoute == Screen.Achievements.route -> "Achievements"
                 currentRoute?.startsWith("pause_point_type") == true ->
                     pausePointTypeName?.ifEmpty { null } ?: "Pause Point"
                 currentRoute?.startsWith("settings_category") == true -> {
@@ -263,11 +261,10 @@ fun ZenithHeader(
                 Box(
                     modifier = Modifier
                         .padding(start = 16.dp)
-                        .size(40.dp)
+                        .size(48.dp)
                         .clip(CircleShape)
                         .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                        .clickable(onClick = onBack)
-                        .padding(8.dp),
+                        .clickable(onClick = onBack),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
@@ -297,13 +294,9 @@ fun ZenithHeader(
             contentAlignment = Alignment.CenterEnd
         ) {
             Row(
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                // Info button keeps a stable identity across routes: it only
-                // fades/scales/expands when appearing or disappearing, never
-                // re-animates on route change. This keeps it anchored while the
-                // trailing switch slot expands/collapses beside it, so there is
-                // no sudden jump and no empty gap.
                 AnimatedVisibility(
                     visible = showInfoButton,
                     enter = fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) +
@@ -336,18 +329,19 @@ fun ZenithHeader(
                                 animationSpec = spring(stiffness = Spring.StiffnessMediumLow)
                             )
                 ) {
-                    IconButton(
-                        onClick = onInfoClick,
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .offset(x = infoButtonOffset)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.Info,
-                            contentDescription = "Screen info",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                IconButton(
+                    onClick = onInfoClick,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Info,
+                        contentDescription = "Screen info",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
                 }
                 actions()
             }

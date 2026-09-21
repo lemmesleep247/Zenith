@@ -32,4 +32,10 @@ interface WebsiteUsageDao {
 
     @Query("DELETE FROM website_usage WHERE date < :thresholdDate")
     suspend fun deleteOldUsage(thresholdDate: String)
+
+    @Query("SELECT COUNT(DISTINCT domain) FROM website_usage")
+    suspend fun getDistinctDomainCount(): Int
+
+    @Query("SELECT COALESCE(SUM(usageTimeMillis), 0) FROM website_usage")
+    suspend fun getTotalMillis(): Long
 }

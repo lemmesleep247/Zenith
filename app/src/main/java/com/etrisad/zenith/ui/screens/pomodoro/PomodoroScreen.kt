@@ -23,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
@@ -72,9 +73,6 @@ fun PomodoroScreen(
     var pendingDeletePreset by remember { mutableStateOf<String?>(null) }
 
     val pomoContext = LocalContext.current
-    // Blocking needs overlay + detection + notification access. Without them a
-    // session would start but silently fail to block, so gate Start here with
-    // the same Toast + system-settings pattern used elsewhere in the app.
     fun startWithPreflight() {
         when {
             !Settings.canDrawOverlays(pomoContext) -> {
@@ -125,16 +123,64 @@ fun PomodoroScreen(
         ) {
             item(key = "status") {
                 val isLongBreak = uiState.isBreakActive && uiState.currentSessionNumber % uiState.sessionsBeforeLongBreak == 0
-                PomodoroStatusProgress(
-                    remainingSessionMillis = if (uiState.isSessionActive) uiState.remainingSessionMillis else uiState.sessionDurationMinutes * 60000L,
-                    remainingBreakMillis = if (uiState.isSessionActive) uiState.remainingBreakMillis else uiState.breakDurationMinutes * 60000L,
-                    isBreakActive = uiState.isBreakActive,
-                    isPaused = uiState.isPaused,
-                    currentSession = uiState.currentSessionNumber,
-                    totalSessions = uiState.sessionCount,
-                    isPreview = !uiState.isSessionActive,
-                    isLongBreak = isLongBreak
+                val heroSize by animateDpAsState(
+                    targetValue = if (uiState.isSessionActive) 320.dp else 240.dp,
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioNoBouncy,
+                        stiffness = Spring.StiffnessLow
+                    ),
+                    label = "PomodoroHeroSize"
                 )
+                AnimatedVisibility(
+                    visible = uiState.isSessionActive,
+                    enter = fadeIn() + expandVertically(),
+                    exit = fadeOut() + shrinkVertically()
+                ) {
+                    Spacer(modifier = Modifier.height(48.dp))
+                }
+                AnimatedContent(
+                    targetState = uiState.isSessionActive,
+                    transitionSpec = {
+                        (fadeIn(spring(stiffness = Spring.StiffnessLow)) +
+                            scaleIn(
+                                initialScale = 0.9f,
+                                animationSpec = spring(
+                                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                                    stiffness = Spring.StiffnessLow
+                                )
+                            ) + slideInVertically(
+                                animationSpec = spring(
+                                    dampingRatio = Spring.DampingRatioNoBouncy,
+                                    stiffness = Spring.StiffnessLow
+                                )
+                            ) { it / 6 }) togetherWith
+                            (fadeOut(spring(stiffness = Spring.StiffnessLow)) +
+                                scaleOut(
+                                    targetScale = 0.9f,
+                                    animationSpec = spring(stiffness = Spring.StiffnessLow)
+                                ) + slideOutVertically(
+                                    animationSpec = spring(
+                                        dampingRatio = Spring.DampingRatioNoBouncy,
+                                        stiffness = Spring.StiffnessLow
+                                    )
+                                ) { -it / 6 })
+                    },
+                    label = "PomodoroStatusMorph"
+                ) {
+                    PomodoroStatusProgress(
+                        remainingSessionMillis = if (uiState.isSessionActive) uiState.remainingSessionMillis else uiState.sessionDurationMinutes * 60000L,
+                        remainingBreakMillis = if (uiState.isSessionActive) uiState.remainingBreakMillis else uiState.breakDurationMinutes * 60000L,
+                        totalSessionMillis = uiState.sessionDurationMinutes * 60000L,
+                        totalBreakMillis = (if (isLongBreak) uiState.longBreakDurationMinutes else uiState.breakDurationMinutes) * 60000L,
+                        isBreakActive = uiState.isBreakActive,
+                        isPaused = uiState.isPaused,
+                        currentSession = uiState.currentSessionNumber,
+                        totalSessions = uiState.sessionCount,
+                        isPreview = !uiState.isSessionActive,
+                        isLongBreak = isLongBreak,
+                        circleSize = heroSize
+                    )
+                }
             }
 
             if (!uiState.isSessionActive) {
@@ -154,6 +200,15 @@ fun PomodoroScreen(
                     )
                 }
 
+                item(key = "stats") {
+                    Column {
+                        PreferenceCategory(title = "Statistics")
+                        PomodoroStatsSection(viewModel = viewModel)
+                    }
+                }
+            }
+
+            if (!uiState.isSessionActive) {
                 item(key = "app_selection") {
                     AppSelectionCard(
                         allowedPackages = uiState.allowedPackages,
@@ -191,31 +246,48 @@ fun PomodoroScreen(
                 .padding(bottom = innerPadding.calculateBottomPadding() + 16.dp)
                 .navigationBarsPadding()
         ) {
-            if (!uiState.isSessionActive) {
-                ZenithButton(
-                    onClick = { startWithPreflight() },
-                    text = "Start Focus",
-                    icon = Icons.Outlined.PlayArrow,
-                    size = ZenithButtonSize.ExtraLarge,
-                    fillMaxWidth = true
-                )
-            } else {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (uiState.pauseable) {
-                        ZenithButton(
-                            onClick = {
-                                if (uiState.isPaused) viewModel.resumeSession()
-                                else viewModel.pauseSession()
-                            },
-                            text = if (uiState.isPaused) "Resume Session" else "Pause Session",
-                            icon = if (uiState.isPaused) Icons.Outlined.PlayArrow else Icons.Outlined.Pause,
-                            type = if (uiState.isPaused) ZenithButtonType.Filled else ZenithButtonType.Outlined,
-                            containerColor = if (uiState.isPaused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiaryContainer,
-                            contentColor = if (uiState.isPaused) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onTertiaryContainer,
-                            size = ZenithButtonSize.Large,
-                            fillMaxWidth = true
-                        )
-                    }
+            AnimatedContent(
+                targetState = uiState.isSessionActive,
+                transitionSpec = {
+                    (fadeIn() + expandVertically()) togetherWith
+                        (fadeOut() + shrinkVertically())
+                },
+                label = "PomodoroButtonsMorph"
+            ) { sessionActive ->
+                if (!sessionActive) {
+                    ZenithButton(
+                        onClick = { startWithPreflight() },
+                        text = "Start Focus",
+                        icon = Icons.Outlined.PlayArrow,
+                        size = ZenithButtonSize.ExtraLarge,
+                        fillMaxWidth = true
+                    )
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (uiState.pauseable) {
+                            AnimatedContent(
+                                targetState = uiState.isPaused,
+                                transitionSpec = {
+                                    (fadeIn() + scaleIn(initialScale = 0.95f))
+                                        .togetherWith(fadeOut() + scaleOut(targetScale = 0.95f))
+                                },
+                                label = "PomodoroPauseSwap"
+                            ) { paused ->
+                                ZenithButton(
+                                    onClick = {
+                                        if (paused) viewModel.resumeSession()
+                                        else viewModel.pauseSession()
+                                    },
+                                    text = if (paused) "Resume Session" else "Pause Session",
+                                    icon = if (paused) Icons.Outlined.PlayArrow else Icons.Outlined.Pause,
+                                    type = if (paused) ZenithButtonType.Filled else ZenithButtonType.Outlined,
+                                    containerColor = if (paused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiaryContainer,
+                                    contentColor = if (paused) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onTertiaryContainer,
+                                    size = ZenithButtonSize.Large,
+                                    fillMaxWidth = true
+                                )
+                            }
+                        }
 
                     if (uiState.isBreakActive) {
                         ZenithButton(
@@ -240,6 +312,7 @@ fun PomodoroScreen(
                 }
             }
         }
+    }
     }
 
     if (showAppPicker) {
@@ -869,21 +942,24 @@ fun AppSelectionCard(
 fun PomodoroStatusProgress(
     remainingSessionMillis: Long,
     remainingBreakMillis: Long,
+    totalSessionMillis: Long,
+    totalBreakMillis: Long,
     isBreakActive: Boolean,
     isPaused: Boolean,
     currentSession: Int,
     totalSessions: Int,
     isPreview: Boolean = false,
-    isLongBreak: Boolean = false
+    isLongBreak: Boolean = false,
+    circleSize: androidx.compose.ui.unit.Dp = 240.dp
 ) {
     val remaining = if (isBreakActive) remainingBreakMillis else remainingSessionMillis
-    val total = if (isBreakActive) {
-        if (isPreview) remainingBreakMillis else remainingBreakMillis.coerceAtLeast(1L) 
-    } else {
-        if (isPreview) remainingSessionMillis else remainingSessionMillis.coerceAtLeast(1L)
+    val total = if (isBreakActive) totalBreakMillis else totalSessionMillis
+    val progressValue = when {
+        isPreview -> 0f
+        total <= 0L -> 0f
+        isBreakActive -> (remaining.toFloat() / total).coerceIn(0f, 1f)
+        else -> (1f - remaining.toFloat() / total).coerceIn(0f, 1f)
     }
-    
-    val progressValue = if (isPreview) 1f else if (total > 0) (1f - remaining.toFloat() / total.toFloat()).coerceIn(0f, 1f) else 0f
 
     val animatedProgress by animateFloatAsState(
         targetValue = progressValue,
@@ -916,12 +992,11 @@ fun PomodoroStatusProgress(
     val accentColor = if (isBreakActive) MaterialTheme.colorScheme.tertiary
     else if (isPaused) MaterialTheme.colorScheme.secondary
     else MaterialTheme.colorScheme.primary
-
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
-            .size(240.dp)
-            .padding(16.dp)
+            .size(circleSize)
+            .padding(20.dp)
     ) {
         CircularWavyProgressIndicator(
             progress = { animatedProgress },
@@ -933,40 +1008,82 @@ fun PomodoroStatusProgress(
             amplitude = { waveAmplitude },
             wavelength = 48.dp
         )
+        AnimatedContent(
+            targetState = Triple(isBreakActive, isPaused, isPreview),
+            transitionSpec = {
+                (fadeIn() + scaleIn(initialScale = 0.85f))
+                    .togetherWith(fadeOut() + scaleOut(targetScale = 0.85f))
+            },
+            label = "PomodoroCenterSwap"
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(
+                    imageVector = when {
+                        isBreakActive -> if (isLongBreak) Icons.Outlined.Coffee else Icons.Outlined.FreeBreakfast
+                        isPaused -> Icons.Outlined.Pause
+                        else -> Icons.Outlined.Timer
+                    },
+                    contentDescription = null,
+                    tint = accentColor,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .graphicsLayer {
+                            scaleX = iconScale
+                            scaleY = iconScale
+                        }
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                val minutes = (remaining / 60000).toInt()
+                val seconds = ((remaining % 60000) / 1000).toInt()
+                Text(
+                    text = if (isPreview) "${minutes}m" else "${minutes}m ${seconds}s",
+                    style = MaterialTheme.typography.headlineLarge,
+                    fontWeight = FontWeight.Black
+                )
+                Text(
+                    text = when {
+                        isPreview -> "Ready to Focus"
+                        isBreakActive -> if (isLongBreak) "Long Break $currentSession/$totalSessions" else "Break $currentSession/$totalSessions"
+                        isPaused -> "Paused - Session $currentSession/$totalSessions"
+                        else -> "Session $currentSession/$totalSessions"
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                SessionDots(
+                    currentSession = currentSession,
+                    totalSessions = totalSessions,
+                    accentColor = accentColor
+                )
+            }
+        }
+    }
+}
 
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(
-                imageVector = when {
-                    isBreakActive -> if (isLongBreak) Icons.Outlined.Coffee else Icons.Outlined.FreeBreakfast
-                    isPaused -> Icons.Outlined.Pause
-                    else -> Icons.Outlined.Timer
-                },
-                contentDescription = null,
-                tint = accentColor,
+@Composable
+private fun SessionDots(
+    currentSession: Int,
+    totalSessions: Int,
+    accentColor: Color
+) {
+    val completed = (currentSession - 1).coerceIn(0, totalSessions.coerceAtLeast(1))
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        repeat(totalSessions.coerceIn(1, 12)) { index ->
+            val color = when {
+                index < completed -> accentColor
+                index == completed -> accentColor.copy(alpha = 0.45f)
+                else -> MaterialTheme.colorScheme.surfaceVariant
+            }
+            val dotSize = if (index == completed) 10.dp else 8.dp
+            Box(
                 modifier = Modifier
-                    .size(32.dp)
-                    .graphicsLayer {
-                        scaleX = iconScale
-                        scaleY = iconScale
-                    }
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            val minutes = (remaining / 60000).toInt()
-            val seconds = ((remaining % 60000) / 1000).toInt()
-            Text(
-                text = if (isPreview) "${minutes}m" else "${minutes}m ${seconds}s",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Black
-            )
-            Text(
-                text = when {
-                    isPreview -> "Ready to Focus"
-                    isBreakActive -> if (isLongBreak) "Long Break $currentSession/$totalSessions" else "Break $currentSession/$totalSessions"
-                    isPaused -> "Paused - Session $currentSession/$totalSessions"
-                    else -> "Session $currentSession/$totalSessions"
-                },
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                    .size(dotSize)
+                    .clip(CircleShape)
+                    .background(color)
             )
         }
     }

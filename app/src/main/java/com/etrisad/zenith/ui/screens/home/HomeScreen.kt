@@ -117,6 +117,9 @@ fun HomeScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val preferences by viewModel.homeScreenPreferences.collectAsState()
+    val bannerPrefs by userPreferencesRepository.userPreferencesFlow.collectAsState(
+        initial = UserPreferences()
+    )
 
     val coroutineScope = rememberCoroutineScope()
 
@@ -135,6 +138,8 @@ fun HomeScreen(
     HomeScreenContent(
         uiState = uiState,
         preferences = preferences,
+        bannerUri = bannerPrefs.userBannerUri,
+        showBanner = bannerPrefs.profileBannerOnHome,
         innerPadding = innerPadding,
         onSetTarget = onSetTarget,
         formatDuration = viewModel::formatDuration,
@@ -160,6 +165,8 @@ fun HomeScreenContent(
     uiState: HomeUiState,
     preferences: com.etrisad.zenith.data.preferences.UserPreferences,
     innerPadding: PaddingValues,
+    bannerUri: String = "",
+    showBanner: Boolean = false,
     onSetTarget: (Int) -> Unit,
     formatDuration: (Long) -> String,
     onShieldSortTypeChange: (ShieldSortType) -> Unit,
@@ -185,7 +192,12 @@ fun HomeScreenContent(
 
     val bedtimeStatus = rememberBedtimeStatus(preferences)
     var activeTab by remember { mutableStateOf(AppTypeTab.APPS) }
-    val nowMillis by produceState(initialValue = System.currentTimeMillis()) { }
+    val nowMillis by produceState(initialValue = System.currentTimeMillis()) {
+        while (true) {
+            delay(60000)
+            value = System.currentTimeMillis()
+        }
+    }
     val isAccessibilityEnabled = isAccessibilityServiceEnabled(LocalContext.current)
 
     PullToRefreshBox(
@@ -240,7 +252,9 @@ fun HomeScreenContent(
                     screenTimeTargetMinutes = preferences.screenTimeTargetMinutes,
                     onSetTarget = onSetTarget,
                     formatDuration = formatDuration,
-                    shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp, bottomStart = 8.dp, bottomEnd = 8.dp)
+                    shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp, bottomStart = 8.dp, bottomEnd = 8.dp),
+                    bannerUri = bannerUri,
+                    showBanner = showBanner
                 )
                 Spacer(modifier = Modifier.height(4.dp))
             }
@@ -380,6 +394,7 @@ fun HomeScreenContent(
             item(key = "quick_actions") {
                 QuickActionsSection(
                     bedtimeStatus = bedtimeStatus,
+                    pomodoroStatus = rememberPomodoroStatus(preferences),
                     onAlarmClick = onAlarmClick,
                     onBedtimeClick = onBedtimeClick,
                     onStatsClick = onStatsClick,
@@ -562,17 +577,51 @@ fun UsageDashboard(
     screenTimeTargetMinutes: Int,
     onSetTarget: (Int) -> Unit,
     formatDuration: (Long) -> String,
-    shape: Shape = RoundedCornerShape(32.dp)
+    shape: Shape = RoundedCornerShape(32.dp),
+    bannerUri: String = "",
+    showBanner: Boolean = false
 ) {
     var showTargetSheet by remember { mutableStateOf(false) }
+    val bannerVisible = showBanner && bannerUri.isNotEmpty()
 
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+            containerColor = if (bannerVisible) Color.Transparent
+            else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
         ),
         shape = shape
     ) {
+        Box(modifier = Modifier.fillMaxWidth()) {
+            if (bannerVisible) {
+                SubcomposeAsyncImage(
+                    model = ImageRequest.Builder(LocalContext.current)
+                        .data(bannerUri).crossfade(300).build(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.matchParentSize(),
+                    loading = {
+                        Box(
+                            modifier = Modifier.matchParentSize()
+                                .background(
+                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+                                )
+                        )
+                    },
+                    error = {
+                        Box(
+                            modifier = Modifier.matchParentSize()
+                                .background(
+                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+                                )
+                        )
+                    }
+                )
+                Box(
+                    modifier = Modifier.matchParentSize()
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f))
+                )
+            }
         Column(
             modifier = Modifier.padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
@@ -735,6 +784,7 @@ fun UsageDashboard(
                 color = if (isExceeded) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                 trackColor = (if (isExceeded) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary).copy(alpha = 0.1f)
             )
+        }
         }
     }
 
@@ -1250,6 +1300,36 @@ data class BedtimeStatus(
     val progress: Float
 )
 
+data class PomodoroStatus(
+    val isActive: Boolean,
+    val isBreak: Boolean,
+    val progress: Float
+)
+
+@Composable
+fun rememberPomodoroStatus(prefs: UserPreferences): PomodoroStatus {
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    val sessionEnd = prefs.pomodoroSessionEndTimestamp
+    val breakEnd = prefs.pomodoroBreakEndTimestamp
+    val active = prefs.pomodoroEnabled && sessionEnd > now
+    LaunchedEffect(active) {
+        if (!active) return@LaunchedEffect
+        while (true) {
+            delay(1000)
+            now = System.currentTimeMillis()
+        }
+    }
+    if (!active) return PomodoroStatus(false, false, 0f)
+    val onBreak = breakEnd > now
+    val total = if (onBreak) prefs.pomodoroBreakDurationMinutes * 60_000L
+        else prefs.pomodoroSessionDurationMinutes * 60_000L
+    val remaining = ((if (onBreak) breakEnd else sessionEnd) - now).coerceAtLeast(0L)
+    val progress = if (total <= 0L) 0f
+    else if (onBreak) (remaining.toFloat() / total).coerceIn(0f, 1f)
+    else (1f - remaining.toFloat() / total).coerceIn(0f, 1f)
+    return PomodoroStatus(true, onBreak, progress)
+}
+
 @Composable
 fun rememberBedtimeStatus(prefs: UserPreferences): BedtimeStatus {
     var status by remember { mutableStateOf(BedtimeStatus(false, "", 1f)) }
@@ -1320,6 +1400,7 @@ fun rememberBedtimeStatus(prefs: UserPreferences): BedtimeStatus {
 @Composable
 fun QuickActionsSection(
     bedtimeStatus: BedtimeStatus,
+    pomodoroStatus: PomodoroStatus,
     onAlarmClick: () -> Unit,
     onBedtimeClick: () -> Unit,
     onStatsClick: () -> Unit,
@@ -1355,7 +1436,37 @@ fun QuickActionsSection(
         QuickActionCard(
             icon = Icons.Outlined.Timer,
             label = "Pomodoro",
-            onClick = onPomodoroClick
+            onClick = onPomodoroClick,
+            content = {
+                AnimatedContent(
+                    targetState = pomodoroStatus.isActive,
+                    transitionSpec = {
+                        (fadeIn() + scaleIn(initialScale = 0.6f))
+                            .togetherWith(fadeOut() + scaleOut(targetScale = 0.6f))
+                    },
+                    label = "PomodoroIconSwap"
+                ) { active ->
+                    if (active) {
+                        CircularWavyProgressIndicator(
+                            progress = { pomodoroStatus.progress },
+                            modifier = Modifier.size(32.dp * densityScale),
+                            color = if (pomodoroStatus.isBreak) MaterialTheme.colorScheme.tertiary
+                                else MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+                            stroke = Stroke(width = with(density) { 3.dp.toPx() } * densityScale),
+                            trackStroke = Stroke(width = with(density) { 3.dp.toPx() } * densityScale),
+                            wavelength = 8.dp * densityScale
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Outlined.Timer,
+                            contentDescription = "Pomodoro",
+                            modifier = Modifier.size(24.dp * densityScale),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
         )
         QuickActionCard(
             icon = Icons.Outlined.Insights,

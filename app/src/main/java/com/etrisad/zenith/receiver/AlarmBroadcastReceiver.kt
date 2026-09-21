@@ -35,17 +35,19 @@ class AlarmBroadcastReceiver : BroadcastReceiver() {
             }
             ACTION_RE_TRIGGER -> {
                 val alarmTime = intent.getStringExtra(AlarmOverlayActivity.EXTRA_ALARM_TIME) ?: "07:00"
-                Log.d("AlarmReceiver", "onReceive: ACTION_RE_TRIGGER alarmTime=$alarmTime")
-                scheduleReTrigger(context, alarmTime)
+                val attempt = intent.getIntExtra(EXTRA_RETRIGGER_COUNT, 0)
+                Log.d("AlarmReceiver", "onReceive: ACTION_RE_TRIGGER alarmTime=$alarmTime attempt=$attempt")
+                scheduleReTrigger(context, alarmTime, attempt)
                 showAlarm(context, alarmTime, intent)
             }
             ACTION_CHECK_USAGE -> {
                 val alarmTime = intent.getStringExtra(AlarmOverlayActivity.EXTRA_ALARM_TIME) ?: "07:00"
                 val isOnce = intent.getBooleanExtra(EXTRA_IS_ONCE, false)
+                val attempt = intent.getIntExtra(EXTRA_RETRIGGER_COUNT, 0)
                 val recentUsage = hasRecentUsage(context)
                 Log.d("AlarmReceiver", "ACTION_CHECK_USAGE: alarmTime=$alarmTime, recentUsage=$recentUsage, isOnce=$isOnce")
                 if (!recentUsage) {
-                    scheduleReTrigger(context, alarmTime)
+                    scheduleReTrigger(context, alarmTime, attempt)
                 } else {
                     Log.d("AlarmReceiver", "ACTION_CHECK_USAGE: user awake, auto-repeat completed")
                     sendAutoRepeatCompleteNotification(context, alarmTime)
@@ -229,6 +231,14 @@ class AlarmBroadcastReceiver : BroadcastReceiver() {
             return base + hour * 100 + minute
         }
 
+        const val EXTRA_ALARM_ID = "alarm_id"
+        private fun requestCodeForId(base: Int, alarmTime: String, alarmId: Long): Int {
+            val parts = alarmTime.split(":")
+            val hour = parts.getOrNull(0)?.toIntOrNull() ?: 0
+            val minute = parts.getOrNull(1)?.toIntOrNull() ?: 0
+            return base + hour * 100 + minute + ((alarmId % 200000L) * 2400L).toInt()
+        }
+
         fun hasExactAlarmPermission(context: Context): Boolean {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
@@ -266,13 +276,15 @@ class AlarmBroadcastReceiver : BroadcastReceiver() {
             }
         }
 
-        fun scheduleAlarm(context: Context, alarmTime: String, days: Set<Int> = emptySet()) {
+        fun scheduleAlarm(context: Context, alarmTime: String, days: Set<Int> = emptySet(), alarmId: Long = 0L) {
             val (hour, minute) = alarmTime.split(":").map { it.toInt() }
-            val requestCode = REQUEST_CODE_ALARM_BASE + hour * 100 + minute
+            val requestCode = if (alarmId > 0L) requestCodeForId(REQUEST_CODE_ALARM_BASE, alarmTime, alarmId)
+            else REQUEST_CODE_ALARM_BASE + hour * 100 + minute
 
             val intent = Intent(context, AlarmBroadcastReceiver::class.java).apply {
                 action = ACTION_FIRE_ALARM
                 putExtra(AlarmOverlayActivity.EXTRA_ALARM_TIME, alarmTime)
+                if (alarmId > 0L) putExtra(EXTRA_ALARM_ID, alarmId)
             }
 
             val pendingIntent = PendingIntent.getBroadcast(
@@ -290,7 +302,7 @@ class AlarmBroadcastReceiver : BroadcastReceiver() {
             cancelAlarm(context, null)
         }
 
-        fun cancelAlarm(context: Context, alarmTime: String?) {
+        fun cancelAlarm(context: Context, alarmTime: String?, alarmId: Long = 0L) {
             val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
             if (alarmTime != null) {
                 val (hour, minute) = alarmTime.split(":").map { it.toInt() }
@@ -304,6 +316,17 @@ class AlarmBroadcastReceiver : BroadcastReceiver() {
                 )
                 alarmManager.cancel(pendingIntent)
                 pendingIntent.cancel()
+                if (alarmId > 0L) {
+                    val idIntent = Intent(context, AlarmBroadcastReceiver::class.java).apply {
+                        action = ACTION_FIRE_ALARM
+                    }
+                    val idPendingIntent = PendingIntent.getBroadcast(
+                        context, requestCodeForId(REQUEST_CODE_ALARM_BASE, alarmTime, alarmId), idIntent,
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                    )
+                    alarmManager.cancel(idPendingIntent)
+                    idPendingIntent.cancel()
+                }
                 cancelReTrigger(context, alarmTime)
                 cancelUsageCheck(context, alarmTime)
             } else {
@@ -347,11 +370,12 @@ class AlarmBroadcastReceiver : BroadcastReceiver() {
             }
         }
 
-        fun scheduleUsageCheck(context: Context, alarmTime: String, isOnce: Boolean = false) {
+        fun scheduleUsageCheck(context: Context, alarmTime: String, isOnce: Boolean = false, retriggerAttempt: Int = 0) {
             val intent = Intent(context, AlarmBroadcastReceiver::class.java).apply {
                 action = ACTION_CHECK_USAGE
                 putExtra(AlarmOverlayActivity.EXTRA_ALARM_TIME, alarmTime)
                 putExtra(EXTRA_IS_ONCE, isOnce)
+                putExtra(EXTRA_RETRIGGER_COUNT, retriggerAttempt)
             }
 
             val requestCode = requestCodeFor(REQUEST_CODE_CHECK_BASE, alarmTime)
@@ -398,10 +422,18 @@ class AlarmBroadcastReceiver : BroadcastReceiver() {
             pendingIntent.cancel()
         }
 
-        private fun scheduleReTrigger(context: Context, alarmTime: String) {
+        const val EXTRA_RETRIGGER_COUNT = "retrigger_count"
+        private const val MAX_RE_TRIGGER_ATTEMPTS = 12
+
+        private fun scheduleReTrigger(context: Context, alarmTime: String, attempt: Int = 0) {
+            if (attempt >= MAX_RE_TRIGGER_ATTEMPTS) {
+                Log.d("AlarmReceiver", "scheduleReTrigger: max attempts reached for $alarmTime, stopping chain")
+                return
+            }
             val intent = Intent(context, AlarmBroadcastReceiver::class.java).apply {
                 action = ACTION_RE_TRIGGER
                 putExtra(AlarmOverlayActivity.EXTRA_ALARM_TIME, alarmTime)
+                putExtra(EXTRA_RETRIGGER_COUNT, attempt + 1)
             }
 
             val requestCode = requestCodeFor(REQUEST_CODE_RE_TRIGGER_BASE, alarmTime)
@@ -447,14 +479,16 @@ class AlarmBroadcastReceiver : BroadcastReceiver() {
         private fun disableAlarm(context: Context, alarmTime: String) {
             try {
                 val app = context.applicationContext as ZenithApplication
+                var alarmId = 0L
                 runBlocking {
                     val repo = app.userPreferencesRepository
                     val prefs = repo.userPreferencesFlow.first()
                     val alarms = repo.parseAlarms(prefs.alarmsJson)
                     val alarm = alarms.find { it.timeString == alarmTime } ?: return@runBlocking
+                    alarmId = alarm.id
                     repo.updateAlarm(alarm.copy(enabled = false))
                 }
-                cancelAlarm(context, alarmTime)
+                cancelAlarm(context, alarmTime, alarmId)
                 Log.d("AlarmReceiver", "disableAlarm: $alarmTime disabled")
             } catch (e: Exception) {
                 Log.w("AlarmReceiver", "disableAlarm failed: ${e.message}")
@@ -527,7 +561,8 @@ class AlarmBroadcastReceiver : BroadcastReceiver() {
         fun rescheduleAllAlarms(context: Context, enabledAlarms: List<AlarmItem>) {
             cancelAlarm(context)
             for (alarm in enabledAlarms) {
-                scheduleAlarm(context, alarm.timeString, alarm.days)
+                cancelAlarm(context, alarm.timeString, alarm.id)
+                scheduleAlarm(context, alarm.timeString, alarm.days, alarm.id)
             }
         }
 

@@ -22,8 +22,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AccountCircle
+import androidx.compose.material.icons.outlined.EmojiEvents
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
@@ -36,6 +42,7 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
@@ -44,16 +51,23 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.etrisad.zenith.data.preferences.ThemeConfig
 import com.etrisad.zenith.data.preferences.UserPreferencesRepository
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import com.etrisad.zenith.ui.screens.profile.achievementTrackingKey
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.etrisad.zenith.ui.components.PermissionBottomSheet
 import com.etrisad.zenith.ui.components.onboarding.OnboardingStatsBottomSheet
 import com.etrisad.zenith.ui.components.onboarding.OnboardingUpdateBottomSheet
-import com.etrisad.zenith.ui.components.UserBottomSheet
 import com.etrisad.zenith.ui.components.ZenithHeader
+import com.etrisad.zenith.ui.components.TopSheet
 import com.etrisad.zenith.ui.components.ConfirmBottomSheet
 import com.etrisad.zenith.ui.navigation.Screen
 import com.etrisad.zenith.ui.navigation.navItems
@@ -64,6 +78,20 @@ import com.etrisad.zenith.ui.screens.alarm.AlarmScreen
 import com.etrisad.zenith.ui.screens.bedtime.BedtimeScreen
 import com.etrisad.zenith.ui.screens.graceperiod.GracePeriodScreen
 import com.etrisad.zenith.ui.screens.pomodoro.PomodoroScreen
+import com.etrisad.zenith.ui.screens.profile.AchievementProgressBanner
+import com.etrisad.zenith.ui.screens.profile.AchievementUnlockBanner
+import com.etrisad.zenith.ui.screens.profile.AchievementsScreen
+import com.etrisad.zenith.ui.screens.profile.PendingUnlock
+import com.etrisad.zenith.ui.screens.profile.ProfileBannerEvent
+import com.etrisad.zenith.ui.screens.profile.ProfileScreen
+import com.etrisad.zenith.ui.screens.profile.AchievementState
+import com.etrisad.zenith.ui.screens.profile.ProfileViewModel
+import com.etrisad.zenith.ui.screens.profile.ProfileViewModelFactory
+import com.etrisad.zenith.ui.screens.profile.formatCompactDuration
+import com.etrisad.zenith.ui.screens.profile.formatProgressNumber
+import com.etrisad.zenith.ui.screens.profile.prettyProfileDate
+import com.etrisad.zenith.ui.screens.profile.tierDisplayName
+import com.etrisad.zenith.ui.screens.profile.tierIconsForLevel
 import com.etrisad.zenith.ui.screens.settings.EyeCareScreen
 import com.etrisad.zenith.ui.screens.settings.LockdownSettings
 import com.etrisad.zenith.ui.screens.settings.pausepoint.PausePointScreen
@@ -90,7 +118,11 @@ import com.etrisad.zenith.data.preferences.UserPreferences
 import androidx.compose.material3.windowsizeclass.WindowSizeClass
 import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 
-@OptIn(ExperimentalMaterial3ExpressiveApi::class, ExperimentalMaterial3Api::class)
+@OptIn(
+    ExperimentalMaterial3ExpressiveApi::class,
+    ExperimentalMaterial3Api::class,
+    kotlinx.coroutines.FlowPreview::class
+)
 @Composable
 fun MainScreen(
     homeViewModel: HomeViewModel,
@@ -109,9 +141,38 @@ fun MainScreen(
         factory = GracePeriodViewModelFactory(userPreferencesRepository)
     )
     val PomodoroViewModel: PomodoroViewModel = androidx.lifecycle.viewmodel.compose.viewModel(
-        factory = PomodoroViewModelFactory(context, userPreferencesRepository)
+        factory = PomodoroViewModelFactory(context, userPreferencesRepository, shieldRepository)
+    )
+    val profileViewModel: ProfileViewModel = androidx.lifecycle.viewmodel.compose.viewModel(
+        factory = ProfileViewModelFactory(context, shieldRepository, userPreferencesRepository)
     )
     val navController = rememberNavController()
+    LaunchedEffect(Unit) {
+        combine(
+            userPreferencesRepository.userPreferencesFlow
+                .map { it.achievementTrackingKey() }
+                .distinctUntilChanged(),
+            shieldRepository.allShields
+                .map { shields ->
+                    shields.map {
+                        it.packageName + it.type + it.bestStreak + it.timeLimitMinutes +
+                            it.emergencyUseCount + it.isDelayAppEnabled +
+                            it.isStrictModeEnabled + it.isGoalCallerEnabled +
+                            it.isAutoQuitEnabled
+                    }
+                }
+                .distinctUntilChanged(),
+            shieldRepository.allSchedules
+                .map { schedules -> schedules.map { it.id } }
+                .distinctUntilChanged(),
+            shieldRepository.getPomodoroTotalCountFlow()
+                .catch { emit(-1) }
+                .distinctUntilChanged()
+        ) { _, _, _, _ -> Unit }
+            .debounce(800)
+            .catch { }
+            .collect { profileViewModel.refresh(silent = true) }
+    }
 
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
@@ -155,6 +216,8 @@ fun MainScreen(
                 currentRoute == Screen.EyeCare.route ||
                 currentRoute == Screen.Lockdown.route ||
                 currentRoute == Screen.Pomodoro.route ||
+                currentRoute == Screen.Profile.route ||
+                currentRoute == Screen.Achievements.route ||
                 currentRoute == Screen.PausePoint.route ||
                 currentRoute == Screen.PausePointQr.route ||
                 currentRoute?.startsWith("pause_point_type") == true ||
@@ -198,15 +261,6 @@ fun MainScreen(
 
     var showBatchDeleteSheet by remember { mutableStateOf(false) }
     var showBatchPauseSheet by remember { mutableStateOf(false) }
-
-    // Single header switch slot: one fixed-size container shared by all
-    // switch screens. Keeping a single slot (instead of one Box per feature
-    // with delayed layout reservation) prevents the info button from jumping
-    // and avoids an empty gap while the switch fades in. Navigating between
-    // two switch screens keeps the slot visible and only cross-fades the inner
-    // content, so the info button does not move at all. Enter/exit animates
-    // width (expand/shrink) together with fade/scale/slide, so the info button
-    // glides smoothly instead of snapping.
     val headerSwitchKey: String? = when {
         currentRoute == Screen.Bedtime.route && preferences.bedtimeEnabled -> "bedtime"
         currentRoute == Screen.GracePeriod.route && preferences.gracePeriodEnabled -> "grace"
@@ -221,12 +275,12 @@ fun MainScreen(
     var showPermissionSheet by remember { mutableStateOf(false) }
     var showOnboardingStatsSheet by remember { mutableStateOf(false) }
     var showOnboardingUpdateSheet by remember { mutableStateOf(false) }
-    var showUserSheet by remember { mutableStateOf(false) }
     var permissionsMissing by remember { mutableStateOf(false) }
 
     val updateManager = remember { GitHubUpdateManager(context) }
     var latestRelease by remember { mutableStateOf<GitHubRelease?>(null) }
     var showUpdateSheet by remember { mutableStateOf(false) }
+    var showNotifCenter by remember { mutableStateOf(false) }
 
     LaunchedEffect(preferences.checkUpdateOnStart) {
         if (com.etrisad.zenith.BuildConfig.SHOW_UPDATES && preferences.checkUpdateOnStart) {
@@ -311,6 +365,7 @@ fun MainScreen(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 updatePermissionsBadge()
+                profileViewModel.refresh(silent = true)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -357,6 +412,12 @@ fun MainScreen(
     }
 
     if (showFeatureInfoSheet) {
+        LaunchedEffect(currentRoute, navBackStackEntry?.arguments?.getString("category")) {
+            val route = currentRoute ?: return@LaunchedEffect
+            val cat = navBackStackEntry?.arguments?.getString("category") ?: ""
+            val key = if (cat.isNotBlank()) "$route:$cat" else route
+            userPreferencesRepository.addInfoVisitedRoute(key)
+        }
         FeatureInfoSheet(
             info = FeatureInfoRegistry.infoFor(
                 currentRoute,
@@ -365,7 +426,7 @@ fun MainScreen(
             onDismissRequest = { showFeatureInfoSheet = false }
         )
     }
-
+    Box(modifier = Modifier.fillMaxSize()) {
     Row(
         modifier = Modifier.fillMaxSize()
     ) {
@@ -377,6 +438,8 @@ fun MainScreen(
                     currentRoute != Screen.EyeCare.route &&
                     currentRoute != Screen.Lockdown.route &&
                     currentRoute != Screen.Pomodoro.route &&
+                    currentRoute != Screen.Profile.route &&
+                    currentRoute != Screen.Achievements.route &&
                     currentRoute != Screen.PausePoint.route &&
                     currentRoute != Screen.PausePointQr.route &&
                     currentRoute?.startsWith("pause_point_type") == false &&
@@ -482,6 +545,7 @@ fun MainScreen(
                                     onClick = { focusViewModel.toggleSelectionMode() },
                                     modifier = Modifier
                                         .padding(start = 12.dp)
+                                        .size(48.dp)
                                         .clip(CircleShape)
                                         .scale(scale),
                                     interactionSource = interactionSource
@@ -489,7 +553,8 @@ fun MainScreen(
                                     Icon(
                                         imageVector = if (isSelected) Icons.Outlined.Close else Icons.Outlined.Checklist,
                                         contentDescription = "Select",
-                                        tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                        tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(24.dp)
                                     )
                                 }
                             }
@@ -556,23 +621,25 @@ fun MainScreen(
                                                 if (!detailLocked) homeViewModel.openSettingsSheet()
                                                 else Toast.makeText(context, "Locked during lockdown hours", Toast.LENGTH_SHORT).show()
                                             },
-                                            modifier = Modifier.padding(end = 12.dp).clip(CircleShape)
+                                            modifier = Modifier.padding(end = 12.dp).size(48.dp).clip(CircleShape)
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Outlined.Edit,
                                                 contentDescription = "Edit App Settings",
-                                                tint = if (detailLocked) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.primary
+                                                tint = if (detailLocked) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(24.dp)
                                             )
                                         }
                                     }
                                     "user" -> {
                                         IconButton(
-                                            onClick = { showUserSheet = true },
-                                            modifier = Modifier.padding(end = 12.dp).clip(CircleShape)
+                                            onClick = { navController.navigate(Screen.Profile.route) },
+                                            modifier = Modifier.padding(end = 12.dp).size(48.dp).clip(CircleShape)
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Outlined.AccountCircle,
-                                                contentDescription = "User Profile"
+                                                contentDescription = "User Profile",
+                                                modifier = Modifier.size(24.dp)
                                             )
                                         }
                                     }
@@ -639,8 +706,6 @@ fun MainScreen(
                                                 checked = preferences.lockdownEnabled,
                                                 onCheckedChange = {
                                                     if (preferences.lockdownEnabled) {
-                                                        // Disabling must pass the puzzle gate in Lockdown
-                                                        // settings - a direct toggle would bypass it.
                                                         navController.navigate(Screen.Lockdown.route)
                                                     } else {
                                                         scope.launch {
@@ -672,6 +737,10 @@ fun MainScreen(
                                                             val enabledAlarms = alarms.filter { it.enabled }
                                                             com.etrisad.zenith.receiver.AlarmBroadcastReceiver.rescheduleAllAlarms(context, enabledAlarms)
                                                         } else {
+                                                            val alarms = userPreferencesRepository.parseAlarms(preferences.alarmsJson)
+                                                            for (alarm in alarms) {
+                                                                com.etrisad.zenith.receiver.AlarmBroadcastReceiver.cancelAlarm(context, alarm.timeString, alarm.id)
+                                                            }
                                                             com.etrisad.zenith.receiver.AlarmBroadcastReceiver.cancelAlarm(context)
                                                         }
                                                     }
@@ -723,16 +792,6 @@ fun MainScreen(
                     showTimeSelection = false
                 )
             }
-            if (showUserSheet) {
-                UserBottomSheet(
-                    userName = preferences.userName,
-                    currentStreak = homeUiState.globalCurrentStreak,
-                    bestStreak = homeUiState.globalBestStreak,
-                    repository = userPreferencesRepository,
-                    onDismissRequest = { showUserSheet = false }
-                )
-            }
-
     if (showUpdateSheet && latestRelease != null) {
         val isDark = when (preferences.themeConfig) {
             ThemeConfig.FOLLOW_SYSTEM -> isSystemInDarkTheme()
@@ -768,6 +827,8 @@ fun MainScreen(
                                     targetRoute == Screen.EyeCare.route ||
                                     targetRoute == Screen.Lockdown.route ||
                                     targetRoute == Screen.Pomodoro.route ||
+                                    targetRoute == Screen.Profile.route ||
+                                    targetRoute == Screen.Achievements.route ||
                                     targetRoute == Screen.PausePoint.route ||
                                     targetRoute == Screen.PausePointQr.route ||
                                     targetRoute?.startsWith("pause_point_type") == true ||
@@ -787,6 +848,8 @@ fun MainScreen(
                                     initialRoute == Screen.EyeCare.route ||
                                     initialRoute == Screen.Lockdown.route ||
                                     initialRoute == Screen.Pomodoro.route ||
+                                    initialRoute == Screen.Profile.route ||
+                                    initialRoute == Screen.Achievements.route ||
                                     initialRoute == Screen.PausePoint.route ||
                                     initialRoute == Screen.PausePointQr.route ||
                                     initialRoute?.startsWith("pause_point_type") == true ||
@@ -838,6 +901,8 @@ fun MainScreen(
                                     targetRoute == Screen.EyeCare.route ||
                                     targetRoute == Screen.Lockdown.route ||
                                     targetRoute == Screen.Pomodoro.route ||
+                                    targetRoute == Screen.Profile.route ||
+                                    targetRoute == Screen.Achievements.route ||
                                     targetRoute == Screen.PausePoint.route ||
                                     targetRoute == Screen.PausePointQr.route ||
                                     targetRoute?.startsWith("pause_point_type") == true ||
@@ -858,6 +923,8 @@ fun MainScreen(
                                     initialRoute == Screen.EyeCare.route ||
                                     initialRoute == Screen.Lockdown.route ||
                                     initialRoute == Screen.Pomodoro.route ||
+                                    initialRoute == Screen.Profile.route ||
+                                    initialRoute == Screen.Achievements.route ||
                                     initialRoute == Screen.PausePoint.route ||
                                     initialRoute == Screen.PausePointQr.route ||
                                     initialRoute?.startsWith("pause_point_type") == true ||
@@ -1008,14 +1075,43 @@ fun MainScreen(
                             preferencesRepository = userPreferencesRepository
                         )
                     }
+                    composable(Screen.Profile.route) {
+                        ProfileScreen(
+                            profileViewModel = profileViewModel,
+                            homeViewModel = homeViewModel,
+                            preferencesRepository = userPreferencesRepository,
+                            innerPadding = innerPadding,
+                            onAppClick = { packageName ->
+                                navController.navigate(Screen.AppDetail.createRoute(packageName))
+                            },
+                            onSeeAllAchievements = {
+                                navController.navigate(Screen.Achievements.route)
+                            }
+                        )
+                    }
+                    composable(
+                        route = Screen.Achievements.route,
+                        arguments = listOf(
+                            androidx.navigation.navArgument("highlightId") {
+                                type = androidx.navigation.NavType.StringType
+                                nullable = true
+                                defaultValue = null
+                            }
+                        )
+                    ) { backStackEntry ->
+                        val highlightId = backStackEntry.arguments?.getString("highlightId")
+                        AchievementsScreen(
+                            profileViewModel = profileViewModel,
+                            innerPadding = innerPadding,
+                            highlightAchievementId = highlightId
+                        )
+                    }
                     composable(Screen.PausePoint.route) {
                         PausePointScreen(
                             preferences = preferences,
                             innerPadding = innerPadding,
                             preferencesRepository = userPreferencesRepository,
                             onTaskTypeClick = { taskType ->
-                                // Every type (including QR_SCAN and CHOOSE_APP) has its own
-                                // settings screen; routing uniformly keeps them reachable.
                                 navController.navigate(Screen.PausePointTypeSettings.createRoute(taskType.name))
                             }
                         )
@@ -1048,8 +1144,6 @@ fun MainScreen(
                                 }
                             )
                         } else {
-                            // Unknown type argument (e.g. stale deep link): go back
-                            // instead of leaving a blank screen under the header.
                             LaunchedEffect(Unit) { navController.popBackStack() }
                         }
                     }
@@ -1133,6 +1227,10 @@ fun MainScreen(
                             onOpenPermissions = { showPermissionSheet = true },
                             onTriggerOnboardingStats = { showOnboardingStatsSheet = true },
                             onTriggerOnboardingUpdate = { showOnboardingUpdateSheet = true },
+                            onTestAchievementBanner = {
+                                profileViewModel.testUnlockBanner()
+                                navController.navigate(Screen.Profile.route)
+                            },
                             performanceBackInterceptor = performanceBackInterceptor
                         )
                     }
@@ -1153,6 +1251,8 @@ fun MainScreen(
                             currentRoute != Screen.SystemUsageDebug.route &&
                             currentRoute != Screen.OverlayAppearance.route &&
                             currentRoute != Screen.Pomodoro.route &&
+                            currentRoute != Screen.Profile.route &&
+                            currentRoute != Screen.Achievements.route &&
                             currentRoute != Screen.PausePoint.route &&
                             currentRoute != Screen.PausePointQr.route &&
                             currentRoute?.startsWith("pause_point_type") == false &&
@@ -1300,6 +1400,437 @@ fun MainScreen(
                             }
                         }
                     }
+                }
+
+                GlobalAchievementBanners(
+                    profileViewModel = profileViewModel,
+                    navController = navController,
+                    onOpenCenter = { showNotifCenter = true },
+                    modifier = Modifier.align(Alignment.TopCenter)
+                )
+            }
+        }
+    }
+    run {
+        val centerPending by profileViewModel.pendingBanners.collectAsState()
+        val centerProfile by profileViewModel.uiState.collectAsState()
+        NotificationCenterSheet(
+            visible = showNotifCenter,
+            pending = centerPending,
+            achievements = centerProfile.achievements,
+            onOpenPending = { event ->
+                profileViewModel.consumeBanner(event.key)
+                showNotifCenter = false
+                val defId = when (event) {
+                    is ProfileBannerEvent.Unlock -> event.defId
+                    is ProfileBannerEvent.Progress -> event.defId
+                }
+                navController.navigate(Screen.Achievements.createRoute(defId))
+            },
+                            onDismissOne = { profileViewModel.consumeBanner(it) },
+                            onClearAll = { profileViewModel.clearAllBanners() },
+                            onOpenRecent = {
+                                showNotifCenter = false
+                                navController.navigate(Screen.Achievements.route)
+                            },
+            onDismiss = { showNotifCenter = false }
+        )
+    }
+    }
+}
+
+@Composable
+private fun NotificationCenterSheet(
+    visible: Boolean,
+    pending: List<ProfileBannerEvent>,
+    achievements: List<AchievementState>,
+    onOpenPending: (ProfileBannerEvent) -> Unit,
+    onDismissOne: (String) -> Unit,
+    onClearAll: () -> Unit,
+    onOpenRecent: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val recent = remember(achievements, pending) {
+        val pendingKeys = pending.mapNotNull { event ->
+            (event as? ProfileBannerEvent.Unlock)?.let { it.defId to it.tierValue }
+        }.toSet()
+        achievements.flatMap { state ->
+            state.unlockedDates.mapNotNull { (tierValue, date) ->
+                if (state.def.id to tierValue in pendingKeys) null
+                else Triple(state.def, tierValue, date)
+            }
+        }.sortedByDescending { it.third }.take(8)
+    }
+    TopSheet(
+        visible = visible,
+        onDismissRequest = onDismiss
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 24.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "Notifications",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Black,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(
+                    onClick = onClearAll,
+                    enabled = pending.isNotEmpty()
+                ) { Text("Clear all") }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = "New",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            if (pending.isEmpty()) {
+                Text(
+                    text = "You're all caught up",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    pending.forEachIndexed { index, event ->
+                        val def = achievements.find {
+                            it.def.id == when (event) {
+                                is ProfileBannerEvent.Unlock -> event.defId
+                                is ProfileBannerEvent.Progress -> event.defId
+                            }
+                        }?.def
+                        val (title, subtitle) = when (event) {
+                            is ProfileBannerEvent.Unlock -> {
+                                val name = def?.let { tierDisplayName(it, event.tierLevel) }
+                                    ?: "Achievement unlocked"
+                                name to "Achievement unlocked - ${prettyProfileDate(event.date)}"
+                            }
+                            is ProfileBannerEvent.Progress -> {
+                                val level = def?.thresholds?.count { event.after >= it.required } ?: 0
+                                val name = def?.let { tierDisplayName(it, level) } ?: "Progress"
+                                name to "${formatProgressNumber(event.defId, event.before)} → ${
+                                    formatProgressNumber(event.defId, event.after)
+                                }"
+                            }
+                        }
+                        Card(
+                            onClick = { onOpenPending(event) },
+                            shape = notifGroupShape(index, pending.size),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(40.dp)
+                                        .clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.tertiaryContainer),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = def?.icon ?: Icons.Outlined.EmojiEvents,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = title,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1
+                                    )
+                                    Text(
+                                        text = subtitle,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1
+                                    )
+                                }
+                                IconButton(
+                                    onClick = { onDismissOne(event.key) },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Close,
+                                        contentDescription = "Dismiss",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "Earlier",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            if (recent.isEmpty()) {
+                Text(
+                    text = "No earlier notifications",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    recent.forEachIndexed { index, (def, tierValue, date) ->
+                        val level = def.thresholds.indexOfFirst { it.tier.value == tierValue } + 1
+                        Card(
+                            onClick = onOpenRecent,
+                            shape = notifGroupShape(index, recent.size),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(40.dp)
+                                        .clip(CircleShape)
+                                        .background(
+                                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = def.icon,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Text(
+                                    text = tierDisplayName(def, level),
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.weight(1f),
+                                    maxLines = 1
+                                )
+                                Text(
+                                    text = prettyProfileDate(date),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 12.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(40.dp)
+                        .height(4.dp)
+                        .clip(CircleShape)
+                        .background(
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                        )
+                )
+            }
+        }
+    }
+}
+
+private fun notifGroupShape(index: Int, total: Int): RoundedCornerShape = when {
+    total == 1 -> RoundedCornerShape(24.dp)
+    index == 0 -> RoundedCornerShape(
+        topStart = 24.dp, topEnd = 24.dp, bottomStart = 8.dp, bottomEnd = 8.dp
+    )
+    index == total - 1 -> RoundedCornerShape(
+        topStart = 8.dp, topEnd = 8.dp, bottomStart = 24.dp, bottomEnd = 24.dp
+    )
+    else -> RoundedCornerShape(8.dp)
+}
+
+@Composable
+private fun GlobalAchievementBanners(
+    profileViewModel: ProfileViewModel,
+    navController: androidx.navigation.NavController,
+    onOpenCenter: () -> Unit,
+    onOpenAchievement: (String) -> Unit = {},
+    modifier: Modifier = Modifier
+) {
+    val pendingBanners by profileViewModel.pendingBanners.collectAsState()
+    val profileUiState by profileViewModel.uiState.collectAsState()
+    val currentBanner = pendingBanners.firstOrNull()
+    var bannerDrag by remember { mutableFloatStateOf(0f) }
+    var bannerReleased by remember { mutableStateOf(true) }
+    val bannerDensity = LocalDensity.current
+    val bannerFollowOffset by animateFloatAsState(
+        targetValue = if (bannerReleased) 0f else bannerDrag,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
+        label = "BannerDragFollow"
+    )
+    LaunchedEffect(currentBanner) {
+        if (currentBanner != null) {
+            val isFull = (currentBanner as? ProfileBannerEvent.Progress)?.let { banner ->
+                val thresholds = profileUiState.achievements.find { it.def.id == banner.defId }?.def?.thresholds
+                val nextReq = thresholds?.firstOrNull { banner.after < it.required }?.required
+                nextReq == null || banner.after >= (nextReq ?: Long.MAX_VALUE)
+            } ?: false
+            delay(
+                if (currentBanner is ProfileBannerEvent.Progress) {
+                    if (isFull) 5000L else 3200L
+                } else 4500L
+            )
+            profileViewModel.consumeBanner(currentBanner.key)
+        }
+    }
+    AnimatedContent(
+        targetState = currentBanner,
+        modifier = modifier
+            .windowInsetsPadding(WindowInsets.statusBars)
+            .padding(top = 72.dp, start = 16.dp, end = 16.dp)
+            .offset { IntOffset(0, bannerFollowOffset.roundToInt()) }
+            .draggable(
+                state = rememberDraggableState {
+                    bannerReleased = false
+                    bannerDrag += it
+                },
+                orientation = Orientation.Vertical,
+                onDragStopped = {
+                    val threshold = with(bannerDensity) { 56.dp.toPx() }
+                    when {
+                        bannerDrag > threshold -> onOpenCenter()
+                        bannerDrag < -threshold -> profileViewModel.clearAllBanners()
+                    }
+                    bannerDrag = 0f
+                    bannerReleased = true
+                }
+            ),
+        transitionSpec = {
+            val slideBouncy = spring<IntOffset>(
+                dampingRatio = Spring.DampingRatioMediumBouncy,
+                stiffness = Spring.StiffnessLow
+            )
+            val fade = spring<Float>(stiffness = Spring.StiffnessMediumLow)
+            if (targetState != null) {
+                (slideInVertically(
+                    initialOffsetY = { -it },
+                    animationSpec = slideBouncy
+                ) + fadeIn(animationSpec = fade) + scaleIn(
+                    initialScale = 0.92f,
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                        stiffness = Spring.StiffnessMediumLow
+                    )
+                )).togetherWith(
+                    slideOutVertically(
+                        targetOffsetY = { -it },
+                        animationSpec = spring(stiffness = Spring.StiffnessMediumLow)
+                    ) + fadeOut(animationSpec = fade)
+                )
+            } else {
+                (fadeIn(animationSpec = fade) + scaleIn(initialScale = 0.92f)).togetherWith(
+                    slideOutVertically(
+                        targetOffsetY = { -it },
+                        animationSpec = spring(stiffness = Spring.StiffnessMediumLow)
+                    ) + fadeOut(animationSpec = fade)
+                )
+            }.apply { targetContentZIndex = if (targetState != null) 1f else 0f }
+        },
+        label = "AchievementBannerSwap"
+    ) { banner ->
+        if (banner == null) {
+            Box(Modifier.fillMaxWidth())
+        } else {
+            val defId = when (banner) {
+                is ProfileBannerEvent.Unlock -> banner.defId
+                is ProfileBannerEvent.Progress -> banner.defId
+            }
+            val bannerState = remember(banner, profileUiState.achievements) {
+                profileUiState.achievements.find { it.def.id == defId }
+            }
+            when (banner) {
+                is ProfileBannerEvent.Unlock -> {
+                    AchievementUnlockBanner(
+                        unlock = PendingUnlock(
+                            banner.defId, banner.tierLevel, banner.tierValue,
+                            banner.date, banner.prevLevel
+                        ),
+                        state = bannerState,
+                        onOpen = {
+                            profileViewModel.consumeBanner(banner.key)
+                            onOpenAchievement(banner.defId)
+                        },
+                        onDismiss = { profileViewModel.consumeBanner(banner.key) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                is ProfileBannerEvent.Progress -> {
+                    val thresholds = bannerState?.def?.thresholds
+                    val tierUpThreshold = thresholds?.firstOrNull {
+                        banner.after >= it.required && banner.before < it.required
+                    }
+                    val isFull: Boolean
+                    val beforeFraction: Float
+                    val afterFraction: Float
+                    val progressTitle: String
+                    val tierSymbols: List<androidx.compose.ui.graphics.vector.ImageVector>
+                    if (tierUpThreshold != null) {
+                        val level = (thresholds?.indexOf(tierUpThreshold) ?: -1) + 1
+                        beforeFraction = (banner.before.toFloat() / tierUpThreshold.required).coerceIn(0f, 1f)
+                        afterFraction = 1f
+                        progressTitle = bannerState?.def?.let { tierDisplayName(it, level) } ?: "Progress"
+                        tierSymbols = tierIconsForLevel(level)
+                        isFull = true
+                    } else {
+                        val afterLevel = thresholds?.count { banner.after >= it.required } ?: 0
+                        progressTitle = bannerState?.def?.let { tierDisplayName(it, afterLevel) } ?: "Progress"
+                        val nextReq = thresholds?.firstOrNull { banner.after < it.required }?.required
+                        beforeFraction = if (nextReq != null && nextReq > 0) (banner.before.toFloat() / nextReq).coerceIn(0f, 1f) else 1f
+                        afterFraction = if (nextReq != null && nextReq > 0) (banner.after.toFloat() / nextReq).coerceIn(0f, 1f) else 1f
+                        tierSymbols = emptyList()
+                        isFull = false
+                    }
+                    AchievementProgressBanner(
+                        title = progressTitle,
+                        icon = bannerState?.def?.icon ?: Icons.Outlined.EmojiEvents,
+                        beforeLabel = formatProgressNumber(banner.defId, banner.before),
+                        afterLabel = formatProgressNumber(banner.defId, banner.after),
+                        beforeFraction = beforeFraction,
+                        afterFraction = afterFraction,
+                        isFull = isFull,
+                        tierSymbols = tierSymbols,
+                        onOpen = {
+                            profileViewModel.consumeBanner(banner.key)
+                            onOpenAchievement(banner.defId)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
             }
         }
