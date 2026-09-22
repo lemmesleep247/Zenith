@@ -18,18 +18,19 @@ import androidx.compose.material.icons.outlined.CloudDone
 import androidx.compose.material.icons.outlined.Contrast
 import androidx.compose.material.icons.outlined.DateRange
 import androidx.compose.material.icons.outlined.TextFields
-import androidx.compose.material.icons.outlined.Contrast
 import androidx.compose.material.icons.outlined.DataArray
+import kotlin.math.pow
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.Call
 import androidx.compose.material.icons.outlined.Campaign
 import androidx.compose.material.icons.outlined.CleaningServices
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Colorize
+import androidx.compose.material.icons.outlined.Cyclone
 import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.DashboardCustomize
-import androidx.compose.material.icons.outlined.Diamond
 import androidx.compose.material.icons.outlined.DirectionsRun
+import androidx.compose.material.icons.outlined.FilterVintage
 import androidx.compose.material.icons.outlined.Dock
 import androidx.compose.material.icons.outlined.EmojiEvents
 import androidx.compose.material.icons.outlined.EventRepeat
@@ -39,14 +40,15 @@ import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material.icons.outlined.Gavel
 import androidx.compose.material.icons.outlined.Healing
 import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.Hive
 import androidx.compose.material.icons.outlined.Hotel
 import androidx.compose.material.icons.outlined.HourglassEmpty
 import androidx.compose.material.icons.outlined.HourglassFull
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Map
 import androidx.compose.material.icons.outlined.Medication
+import androidx.compose.material.icons.outlined.MilitaryTech
 import androidx.compose.material.icons.outlined.NightsStay
-import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.NotificationsOff
 import androidx.compose.material.icons.outlined.PlayCircle
@@ -61,7 +63,6 @@ import androidx.compose.material.icons.outlined.PauseCircle
 import androidx.compose.material.icons.outlined.PictureInPicture
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.QrCode2
-import androidx.compose.material.icons.outlined.RocketLaunch
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Savings
 import androidx.compose.material.icons.outlined.Security
@@ -70,25 +71,35 @@ import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.Snooze
 import androidx.compose.material.icons.outlined.Update
-import androidx.compose.material.icons.outlined.Star
+import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material.icons.outlined.TrackChanges
+import androidx.compose.material.icons.outlined.Token
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material.icons.outlined.Whatshot
-import androidx.compose.material.icons.outlined.WorkspacePremium
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 
-const val PROFILE_XP_PER_LEVEL = 500
+/** Base XP cost of the first level-up (Level 1 -> 2), kept flat-compatible. */
+const val PROFILE_XP_BASE = 500
+/**
+ * Gentle exponential curve exponent. Each level costs more than the last,
+ * but softly: 1.35 keeps early levels within days and level 30 within
+ * roughly a year of steady use.
+ */
+const val PROFILE_XP_CURVE = 1.35
 enum class ProfileTier(val value: Int, val icon: ImageVector, val title: String) {
-    I(1, Icons.Outlined.Star, "Star"),
-    V(5, Icons.Outlined.DarkMode, "Moon"),
-    X(10, Icons.Outlined.LightMode, "Sun"),
-    L(50, Icons.Outlined.RocketLaunch, "Comet"),
-    C(100, Icons.Outlined.WorkspacePremium, "Crown"),
-    D(500, Icons.Outlined.Diamond, "Diamond"),
-    M(1000, Icons.Outlined.EmojiEvents, "Trophy");
+    I(1, Icons.Outlined.StarOutline, "Spark"),
+    V(5, Icons.Outlined.Hive, "Nest"),
+    X(10, Icons.Outlined.Token, "Mint"),
+    L(50, Icons.Outlined.Cyclone, "Vortex"),
+    C(100, Icons.Outlined.FilterVintage, "Bloom"),
+    D(500, Icons.Outlined.MilitaryTech, "Valor"),
+    M(1000, Icons.Outlined.EmojiEvents, "Legend");
 
     companion object {
         fun highestAtOrBelow(value: Long): ProfileTier? =
@@ -151,10 +162,199 @@ fun calcGoalXp(targetMillis: Long, usageMillis: Long): Int {
     }
 }
 
-fun levelForXp(xp: Long): Int = (xp / PROFILE_XP_PER_LEVEL).toInt() + 1
+/**
+ * Cumulative XP required to REACH [level]. Level 1 starts at 0, level 2
+ * costs PROFILE_XP_BASE, higher levels grow gently exponentially.
+ */
+fun xpForLevel(level: Int): Long {
+    if (level <= 1) return 0L
+    return (PROFILE_XP_BASE * (level - 1).toDouble().pow(PROFILE_XP_CURVE)).toLong()
+}
 
-fun levelProgressForXp(xp: Long): Float =
-    ((xp % PROFILE_XP_PER_LEVEL).toFloat() / PROFILE_XP_PER_LEVEL).coerceIn(0f, 1f)
+fun levelForXp(xp: Long): Int {
+    var level = 1
+    while (xp >= xpForLevel(level + 1)) level++
+    return level
+}
+
+fun levelProgressForXp(xp: Long): Float {
+    val level = levelForXp(xp)
+    val current = xpForLevel(level)
+    val next = xpForLevel(level + 1)
+    if (next <= current) return 1f
+    return ((xp - current).toFloat() / (next - current)).coerceIn(0f, 1f)
+}
+
+/** XP still needed from [xpTotal] to reach the next level. */
+fun xpToNextLevel(xpTotal: Long): Long =
+    (xpForLevel(levelForXp(xpTotal) + 1) - xpTotal).coerceAtLeast(0L)
+
+/**
+ * Level milestone titles. Owned automatically once the level is reached,
+ * equipped manually — shown under the profile name and on the share card.
+ */
+data class LevelTitle(val id: String, val name: String, val requiredLevel: Int)
+
+/**
+ * Level milestone avatar borders. Owned automatically once the level is
+ * reached, equipped manually — drawn as a ring around the profile avatar.
+ */
+/**
+ * Special animated effect for pinnacle rings. NONE is static, SPIN slowly
+ * rotates the gradient around the ring, SHINE sweeps a highlight arc over
+ * a solid ring.
+ */
+enum class BorderEffect { NONE, SPIN, SHINE }
+
+data class AvatarBorder(
+    val id: String,
+    val name: String,
+    val requiredLevel: Int,
+    val colors: List<Color>,
+    val effect: BorderEffect = BorderEffect.NONE
+)
+
+val LEVEL_TITLES = listOf(
+    LevelTitle("initiate", "Initiate", 2),
+    LevelTitle("keeper", "Keeper", 5),
+    LevelTitle("warden", "Warden", 10),
+    LevelTitle("sentinel", "Sentinel", 15),
+    LevelTitle("paragon", "Paragon", 20),
+    LevelTitle("luminary", "Luminary", 25),
+    LevelTitle("zenith", "Zenith", 30),
+    LevelTitle("celestial", "Celestial", 35),
+    LevelTitle("eternal", "Eternal", 40),
+    LevelTitle("mythic", "Mythic", 45),
+    LevelTitle("transcendent", "Transcendent", 50),
+    LevelTitle("infinite", "Infinite", 55)
+)
+
+/**
+ * Avatar borders, escalating in color count with level: 5 solid rings,
+ * then 5 rings each blending 2, 3, 4, and finally 5 colors as a gradient.
+ */
+val AVATAR_BORDERS = listOf(
+    // 1 color
+    AvatarBorder("ember", "Ember", 3, listOf(Color(0xFFFF7043))),
+    AvatarBorder("tide", "Tide", 5, listOf(Color(0xFF29B6F6))),
+    AvatarBorder("leaf", "Leaf", 7, listOf(Color(0xFF66BB6A))),
+    AvatarBorder("violet", "Violet", 9, listOf(Color(0xFF7E57C2))),
+    AvatarBorder("rose", "Rose", 11, listOf(Color(0xFFEC407A)), BorderEffect.SHINE),
+    // 2 colors
+    AvatarBorder("moss", "Moss", 14, listOf(Color(0xFF9CCC65), Color(0xFF2E7D32))),
+    AvatarBorder("gold", "Gold", 17, listOf(Color(0xFFFFE082), Color(0xFFFF8F00))),
+    AvatarBorder("frost", "Frost", 20, listOf(Color(0xFF80DEEA), Color(0xFF00838F))),
+    AvatarBorder("magma", "Magma", 23, listOf(Color(0xFFFF8A65), Color(0xFFBF360C))),
+    AvatarBorder("lagoon", "Lagoon", 26, listOf(Color(0xFF4DD0E1), Color(0xFF0D47A1)), BorderEffect.SPIN),
+    // 3 colors
+    AvatarBorder(
+        "dusk", "Dusk", 29,
+        listOf(Color(0xFFCE93D8), Color(0xFF7B1FA2), Color(0xFF311B92))
+    ),
+    AvatarBorder(
+        "sunset", "Sunset", 32,
+        listOf(Color(0xFFFFD54F), Color(0xFFFF7043), Color(0xFFAD1457))
+    ),
+    AvatarBorder(
+        "ocean", "Ocean", 35,
+        listOf(Color(0xFF80DEEA), Color(0xFF1E88E5), Color(0xFF0D47A1))
+    ),
+    AvatarBorder(
+        "forest", "Forest", 38,
+        listOf(Color(0xFFAED581), Color(0xFF43A047), Color(0xFF1B5E20))
+    ),
+    AvatarBorder(
+        "candy", "Candy", 41,
+        listOf(Color(0xFFF48FB1), Color(0xFFEC407A), Color(0xFF880E4F)),
+        BorderEffect.SPIN
+    ),
+    // 4 colors
+    AvatarBorder(
+        "treasure", "Treasure", 44,
+        listOf(
+            Color(0xFFFFF176), Color(0xFFFFC107),
+            Color(0xFFFF8F00), Color(0xFFE65100)
+        )
+    ),
+    AvatarBorder(
+        "aurora", "Aurora", 47,
+        listOf(
+            Color(0xFFA7FFEB), Color(0xFF4DD0E1),
+            Color(0xFF7B1FA2), Color(0xFF311B92)
+        )
+    ),
+    AvatarBorder(
+        "inferno", "Inferno", 50,
+        listOf(
+            Color(0xFFFFD180), Color(0xFFFF7043),
+            Color(0xFFD84315), Color(0xFF3E2723)
+        )
+    ),
+    AvatarBorder(
+        "glacier", "Glacier", 53,
+        listOf(
+            Color(0xFFE1F5FE), Color(0xFF80DEEA),
+            Color(0xFF00838F), Color(0xFF004D40)
+        )
+    ),
+    AvatarBorder(
+        "spring", "Spring", 56,
+        listOf(
+            Color(0xFFF0F4C3), Color(0xFFAED581),
+            Color(0xFF689F38), Color(0xFF33691E)
+        ),
+        BorderEffect.SPIN
+    ),
+    // 5 colors
+    AvatarBorder(
+        "prism", "Prism", 59,
+        listOf(
+            Color(0xFFFF8A80), Color(0xFFFFD180), Color(0xFFA7FFEB),
+            Color(0xFF82B1FF), Color(0xFFEA80FC)
+        )
+    ),
+    AvatarBorder(
+        "spectrum", "Spectrum", 62,
+        listOf(
+            Color(0xFFFF5252), Color(0xFFFFD740), Color(0xFF69F0AE),
+            Color(0xFF40C4FF), Color(0xFFE040FB)
+        )
+    ),
+    AvatarBorder(
+        "nebula", "Nebula", 65,
+        listOf(
+            Color(0xFFEA80FC), Color(0xFF7B1FA2), Color(0xFF29B6F6),
+            Color(0xFFA7FFEB), Color(0xFFFFF176)
+        )
+    ),
+    AvatarBorder(
+        "carnival", "Carnival", 68,
+        listOf(
+            Color(0xFFFF8A80), Color(0xFFFFAB40), Color(0xFFB9F6CA),
+            Color(0xFF84FFFF), Color(0xFFB388FF)
+        )
+    ),
+    AvatarBorder(
+        "eternity", "Eternity", 71,
+        listOf(
+            Color(0xFFD1C4E9), Color(0xFFB39DDB), Color(0xFF90CAF9),
+            Color(0xFF80DEEA), Color(0xFFA5D6A7)
+        ),
+        BorderEffect.SPIN
+    )
+)
+
+/** Next locked reward (title or border) above [level], or null when maxed. */
+fun nextLevelReward(level: Int): Pair<Int, String>? {
+    val upcoming = (LEVEL_TITLES.map { it.requiredLevel to it.name } +
+        AVATAR_BORDERS.map { it.requiredLevel to it.name })
+        .filter { it.first > level }
+    return upcoming.minByOrNull { it.first }
+}
+
+fun borderBrushFor(border: AvatarBorder): Brush =
+    if (border.colors.size == 1) SolidColor(border.colors.first())
+    else Brush.sweepGradient(border.colors + border.colors.first())
 
 enum class AchievementCategory { EXPLORER, ACCUMULATION }
 
@@ -168,19 +368,25 @@ data class AchievementDef(
     val category: AchievementCategory,
     val thresholds: List<TierThreshold>,
     /** Unique name per tier level, index 0 = tier 1. Falls back to [title]. */
-    val tierNames: List<String> = emptyList()
+    val tierNames: List<String> = emptyList(),
+    /**
+     * Explicit opt-in for infinite tiers. When false (default), [isUnlimited]
+     * still extends ACCUMULATION ladders, which are counters by nature.
+     */
+    val unlimited: Boolean = false,
+    /** Multiplier applied per generated tier beyond the handcrafted list. */
+    val curveGrowth: Double = 2.0
 )
 
 data class AchievementState(
     val def: AchievementDef,
     val current: Long,
     val earnedTier: ProfileTier?,
-    /** How many tier thresholds are met, 0..thresholds.size. Displayed roman style. */
+    /** How many tier thresholds are met (unbounded for unlimited ladders). */
     val earnedLevel: Int,
-    val totalLevels: Int,
     val next: TierThreshold?,
     val progressFraction: Float,
-    /** Tier value -> yyyy-MM-dd unlock date, recorded when first observed met. */
+    /** Tier position (1-based) -> yyyy-MM-dd unlock date. See [historyKeyFor]. */
     val unlockedDates: Map<Int, String> = emptyMap()
 )
 
@@ -287,11 +493,178 @@ fun formatProgressNumber(defId: String, value: Long): String =
 
 /**
  * Unique name per tier level, e.g. "Streak in a Cup", "Streak Keeper".
- * Falls back to the base title when no custom name exists.
+ * Handcrafted [AchievementDef.tierNames] win; beyond them (or when missing),
+ * unlimited ladders get a stable generated name; otherwise the base title.
  */
 fun tierDisplayName(def: AchievementDef, level: Int): String {
     if (level <= 0) return def.title
-    return def.tierNames.getOrNull(level - 1) ?: def.title
+    def.tierNames.getOrNull(level - 1)?.let { return it }
+    if (!isUnlimited(def)) return def.title
+    return generatedTierName(def.id, level)
+}
+
+/**
+ * Accumulation ladders whose counters are naturally bounded never extend:
+ * 3 profile fields, 10 task types, 5 widget slots. Everything else with a
+ * counter (or explicit opt-in) grows forever.
+ */
+private val CAPPED_ACCUMULATION_IDS = setOf("profile_polisher", "taskmaster", "widget_wielder")
+
+fun isUnlimited(def: AchievementDef): Boolean =
+    def.unlimited || (def.category == AchievementCategory.ACCUMULATION && def.id !in CAPPED_ACCUMULATION_IDS)
+
+/** Highest roman denomination at or below a tier position (display only). */
+fun highestDenomForLevel(level: Int): ProfileTier =
+    ProfileTier.entries.sortedByDescending { it.value }.firstOrNull { level >= it.value }
+        ?: ProfileTier.I
+
+/** Snap a raw curve value to a human 1-1.5-2-3-5-8-10 step. */
+fun niceNumber(v: Double): Long {
+    if (!v.isFinite() || v <= 0) return Long.MAX_VALUE
+    val cap = Long.MAX_VALUE / 4.0
+    if (v >= cap) return Long.MAX_VALUE
+    val magnitude = 10.0.pow(kotlin.math.floor(kotlin.math.log10(v)))
+    val f = v / magnitude
+    val snapped = when {
+        f < 1.2 -> 1.0
+        f < 1.75 -> 1.5
+        f < 2.75 -> 2.0
+        f < 3.75 -> 3.0
+        f < 6.0 -> 5.0
+        f < 8.5 -> 8.0
+        else -> 10.0
+    }
+    return (snapped * magnitude).toLong().coerceAtLeast(1L)
+}
+
+/**
+ * Required value for a 1-based tier position. The handcrafted list wins;
+ * beyond it (unlimited ladders only) the curve grows from the last value.
+ * Returns [Long.MAX_VALUE] when no such tier exists (capped ladders).
+ */
+fun requiredFor(def: AchievementDef, level: Int): Long {
+    if (level < 1) return 1L
+    val i = level - 1
+    if (i < def.thresholds.size) return def.thresholds[i].required
+    if (!isUnlimited(def)) return Long.MAX_VALUE
+    val growth = if (def.curveGrowth > 1.0) def.curveGrowth else 2.0
+    var v = def.thresholds.lastOrNull()?.required?.toDouble() ?: 1.0
+    var k = def.thresholds.size
+    val cap = Long.MAX_VALUE / 4.0
+    while (k < level) {
+        v *= growth
+        if (v >= cap) return Long.MAX_VALUE
+        k++
+    }
+    return niceNumber(v)
+}
+
+/**
+ * Full threshold for a 1-based tier position (handcrafted or generated),
+ * or null when the ladder ends there.
+ */
+fun thresholdAtOrNull(def: AchievementDef, level: Int): TierThreshold? {
+    if (level < 1) return null
+    def.thresholds.getOrNull(level - 1)?.let { return it }
+    if (!isUnlimited(def)) return null
+    val required = requiredFor(def, level)
+    if (required == Long.MAX_VALUE) return null
+    return TierThreshold(
+        tier = highestDenomForLevel(level),
+        required = required,
+        requireLabel = generatedRequireLabel(def, required)
+    )
+}
+
+/** How many tiers are met at [current]; works past any list length. */
+fun tierCountFor(def: AchievementDef, current: Long): Int {
+    var level = 0
+    while (level < 100000) {
+        val req = requiredFor(def, level + 1)
+        if (req == Long.MAX_VALUE || current < req) break
+        level++
+    }
+    return level
+}
+
+/** First unmet tier, or null when the ladder is complete (capped defs only). */
+fun nextThresholdFor(def: AchievementDef, current: Long): TierThreshold? =
+    thresholdAtOrNull(def, tierCountFor(def, current) + 1)
+
+private fun generatedRequireLabel(def: AchievementDef, required: Long): String {
+    val lastLabel = def.thresholds.lastOrNull()?.requireLabel ?: ""
+    val suffix = lastLabel.replace(Regex("^\\d[\\d.,]*\\s*"), "")
+    return if (def.id in MILLIS_ACHIEVEMENTS) {
+        val unit = suffix.replace(Regex("^[a-zA-Z]+"), "").trim()
+        val base = formatCompactDuration(required)
+        if (unit.isEmpty()) base else "$base $unit"
+    } else {
+        "$required ${suffix.trim()}".trim()
+    }
+}
+
+/**
+ * Storage key for a tier position. Handcrafted tiers keep their legacy roman
+ * value (no migration needed); generated tiers use negative levels, which
+ * can never collide with positive legacy values.
+ */
+fun historyKeyFor(def: AchievementDef, level: Int): Int {
+    if (level < 1) return level
+    return def.thresholds.getOrNull(level - 1)?.tier?.value ?: -level
+}
+
+/**
+ * Tier position for a storage key, or -1 when the key no longer maps to any
+ * tier (def edited between versions) - callers should skip such rows.
+ */
+fun levelForHistoryKey(def: AchievementDef, key: Int): Int {
+    if (key < 0) return -key
+    val idx = def.thresholds.indexOfFirst { it.tier.value == key }
+    return if (idx >= 0) idx + 1 else -1
+}
+
+private val TIER_ADJECTIVES = listOf(
+    "Amber", "Arctic", "Astral", "Bouncy", "Brisk", "Cardinal",
+    "Celestial", "Cheerful", "Cinder", "Clockwork", "Cosmic", "Crimson",
+    "Dapper", "Drowsy", "Electric", "Ember", "Fern", "Fizz",
+    "Foggy", "Gallant", "Gilded", "Ginger", "Glacier", "Gleeful",
+    "Granite", "Hazel", "Honeyed", "Indigo", "Iron", "Ivory",
+    "Jolly", "Juniper", "Lively", "Lunar", "Maple", "Marble",
+    "Mellow", "Midnight", "Misty", "Molasses", "Mossy", "Neon",
+    "Nimble", "Onyx", "Opal", "Paprika", "Pebble", "Pepper",
+    "Quartz", "Ripple", "Roaring", "Ruby", "Saffron", "Sassy",
+    "Scarlet", "Solar", "Stellar", "Thunder", "Topaz", "Velvet",
+    "Wandering", "Whisper", "Willow", "Zephyr"
+)
+
+private val TIER_NOUNS = listOf(
+    "Acorn", "Badger", "Beacon", "Bison", "Bluff", "Bonsai",
+    "Boulder", "Breeze", "Brook", "Burrow", "Cabin", "Cactus",
+    "Canoe", "Canyon", "Carousel", "Castle", "Cedar", "Comet",
+    "Compass", "Cougar", "Coyote", "Crane", "Dune", "Eagle",
+    "Elm", "Falcon", "Fox", "Galaxy", "Gecko", "Grove",
+    "Harbor", "Hawk", "Hedgehog", "Heron", "Hollow", "Ibex",
+    "Island", "Jackal", "Jaguar", "Jasper", "Kestrel", "Lagoon",
+    "Lark", "Lighthouse", "Lynx", "Mammoth", "Manatee", "Meadow",
+    "Mesa", "Meteor", "Mole", "Monarch", "Moose", "Narwhal",
+    "Nugget", "Otter", "Owl", "Oxbow", "Panda", "Pine",
+    "Pinnacle", "Plover", "Quail", "Raccoon"
+)
+
+private val generatedNameOrder = java.util.concurrent.ConcurrentHashMap<String, List<Int>>()
+
+/**
+ * Stable generated name for tiers past the handcrafted list: a per-achievement
+ * seeded shuffle of adjective+noun pairs, so every ladder gets different names
+ * that never change between runs. Practically inexhaustible (4096 combos).
+ */
+fun generatedTierName(defId: String, level: Int): String {
+    val total = TIER_ADJECTIVES.size * TIER_NOUNS.size
+    val order = generatedNameOrder.getOrPut(defId) {
+        (0 until total).shuffled(kotlin.random.Random(defId.hashCode().toLong()))
+    }
+    val idx = order[(level - 1) % total]
+    return "${TIER_ADJECTIVES[idx / TIER_NOUNS.size]} ${TIER_NOUNS[idx % TIER_NOUNS.size]}"
 }
 
 /** Counts owned symbols per tier across achievements. */
@@ -1199,9 +1572,9 @@ fun buildAchievementStates(stats: ProfileAchievementStats): List<AchievementStat
     )
     return defs.map { def ->
         val current = currentById[def.id] ?: 0L
-        val earned = def.thresholds.filter { current >= it.required }.maxByOrNull { it.tier.value }
-        val earnedLevel = def.thresholds.count { current >= it.required }
-        val next = def.thresholds.filter { current < it.required }.minByOrNull { it.required }
+        val earnedLevel = tierCountFor(def, current)
+        val earnedTier = thresholdAtOrNull(def, earnedLevel)?.tier
+        val next = nextThresholdFor(def, current)
         val progress = when {
             next == null -> 1f
             next.required <= 0L -> 1f
@@ -1210,9 +1583,8 @@ fun buildAchievementStates(stats: ProfileAchievementStats): List<AchievementStat
         AchievementState(
             def = def,
             current = current,
-            earnedTier = earned?.tier,
+            earnedTier = earnedTier,
             earnedLevel = earnedLevel,
-            totalLevels = def.thresholds.size,
             next = next,
             progressFraction = progress
         )

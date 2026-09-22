@@ -144,28 +144,89 @@ class ProfileViewModel(
         }
     }
 
+    /**
+     * Banner keys enqueued by the developer test hook. They must never
+     * pollute the persistent seen-set, otherwise testing would silently
+     * burn the real future notification for those achievement ids.
+     */
+    private val testBannerKeys = mutableSetOf<String>()
+
     fun consumeBanner(key: String) {
+        val removed = _pendingBanners.value.filter { it.key == key }
         _pendingBanners.update { list -> list.filterNot { it.key == key } }
+        if (removed.any { it.key in testBannerKeys }) {
+            testBannerKeys.remove(key)
+        } else {
+            testBannerKeys.remove(key)
+            markBannersSeen(removed.mapNotNull { seenKeyFor(it) })
+        }
     }
 
     fun clearAllBanners() {
+        val queued = _pendingBanners.value
         _pendingBanners.update { emptyList() }
+        markBannersSeen(queued.filterNot { it.key in testBannerKeys }.mapNotNull { seenKeyFor(it) })
+        testBannerKeys.clear()
     }
     fun testUnlockBanner() {
         val today = dateStr(System.currentTimeMillis())
         _pendingUnlocks.update {
             it + PendingUnlock(defId = "streak_keeper", tierLevel = 1, tierValue = 1, date = today)
         }
-        _pendingBanners.update {
-            it + ProfileBannerEvent.Unlock(
+        val testEvents = listOf<ProfileBannerEvent>(
+            ProfileBannerEvent.Unlock(
                 defId = "streak_keeper", tierLevel = 1, tierValue = 1,
                 prevLevel = 0, date = today
-            ) + ProfileBannerEvent.Progress(
+            ),
+            ProfileBannerEvent.Progress(
                 defId = "loyal_tracker",
                 before = 32_400_000L,
                 after = 36_000_000L,
                 date = today
             )
+        )
+        testBannerKeys.addAll(testEvents.map { it.key })
+        _pendingBanners.update { it + testEvents }
+    }
+
+    /**
+     * Seen keys are scoped per achievement AND tier band so every new tier
+     * is still celebrated, but the same banner can never repeat:
+     * - unlock: "$defId#u#$tierLevel" (tierLevel = 1-based position)
+     * - progress: "$defId#p#$band" where band = tiers earned so far
+     *   (i.e. one progress banner per approach toward the next tier).
+     */
+    private fun unlockSeenKey(defId: String, tierLevel: Int) = "$defId#u#$tierLevel"
+
+    private fun progressSeenKey(defId: String, band: Int) = "$defId#p#$band"
+
+    private fun seenKeyFor(event: ProfileBannerEvent): String? = when (event) {
+        is ProfileBannerEvent.Unlock -> unlockSeenKey(event.defId, event.tierLevel)
+        is ProfileBannerEvent.Progress -> {
+            val band = _uiState.value.achievements.find { it.def.id == event.defId }?.earnedLevel
+                ?: return null
+            progressSeenKey(event.defId, band)
+        }
+    }
+
+    /**
+     * Persists banner-seen keys so the same banner never shows twice:
+     * re-entry, resume, and Clear all can never resurrect it, while a
+     * newly reached tier still earns its own celebration.
+     */
+    private fun markBannersSeen(defIds: List<String>) {
+        val fresh = defIds.filter { it.isNotBlank() }.toSet()
+        if (fresh.isEmpty()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val seen =
+                    decodeSeen(userPreferencesRepository.userPreferencesFlow.first().achievementBannersSeen)
+                        .toMutableSet()
+                if (seen.addAll(fresh)) {
+                    userPreferencesRepository.setAchievementBannersSeen(encodeSeen(seen))
+                }
+            } catch (_: Exception) {
+            }
         }
     }
 
@@ -276,7 +337,12 @@ class ProfileViewModel(
                     goalCount = shields.count { it.type == FocusType.GOAL },
                     qrCount = freshPrefs.pausePointQrCodes.size,
                     taskTypeCount = freshPrefs.pausePointTaskTypes.size,
-                    userXpTotal = freshPrefs.userXpTotal,
+                    // While a debug XP override is active, achievements
+                    // compute from the frozen pre-debug base so debugging
+                    // never unlocks real XP achievements. Level display
+                    // keeps following the override total.
+                    userXpTotal = if (freshPrefs.userXpDebugBase >= 0L) freshPrefs.userXpDebugBase
+                    else freshPrefs.userXpTotal,
                     hasCustomOverlay = freshPrefs.overlayPaletteId != "dynamic",
                     hasFloatingBar = freshPrefs.floatingTabBarEnabled,
                     hasUsagePill = freshPrefs.totalUsagePillEnabled,
@@ -584,7 +650,11 @@ class ProfileViewModel(
         todayStr: String
     ): Pair<List<AchievementState>, Set<String>> {
         return try {
-            val rawBefore = userPreferencesRepository.userPreferencesFlow.first().achievementHistory
+            val prefsSnapshot = userPreferencesRepository.userPreferencesFlow.first()
+            val rawBefore = prefsSnapshot.achievementHistory
+            // Per-tier banner keys already shown — never enqueue the same one again.
+            val seen = decodeSeen(prefsSnapshot.achievementBannersSeen).toMutableSet()
+            var seenChanged = false
             // First run seeds the baseline silently so existing progress
             // never floods the unlock notification queue.
             val isBaseline = rawBefore.isBlank()
@@ -594,35 +664,62 @@ class ProfileViewModel(
             val freshUnlocks = mutableListOf<PendingUnlock>()
             val freshBannerUnlocks = mutableListOf<ProfileBannerEvent.Unlock>()
             val newlyTieredIds = mutableSetOf<String>()
+            // Snapshot before the loop so several tiers earned in the SAME
+            // refresh still stack their banners; only later refreshes are gated.
+            val seenAtStart = seen.toSet()
             val enriched = states.map { state ->
                 val dates = stored.getOrPut(state.def.id) { mutableMapOf() }
-                state.def.thresholds.forEach { threshold ->
-                    if (state.current >= threshold.required && !dates.containsKey(threshold.tier.value)) {
-                        dates[threshold.tier.value] = todayStr
+                // One-time migration: legacy keys are roman-denomination values
+                // (1, 5, 10, ...), new keys are 1-based positions. A stored map
+                // is only migrated when it does NOT already look new: new maps
+                // always hold exactly {1..k} (plus maybe negative generated
+                // keys), while no legacy map can take that shape (there is no
+                // denomination 2..4, 6..9, ...). Without this gate, a legit
+                // new key like position 5 would be mistaken for tier V.
+                val positives = dates.keys.filter { it > 0 }
+                val looksNew = positives.isEmpty() ||
+                    (positives.minOrNull() == 1 && positives.size == positives.maxOrNull())
+                if (!looksNew) {
+                    positives.toList().forEach { oldKey ->
+                        val pos = state.def.thresholds.indexOfFirst { it.tier.value == oldKey } + 1
+                        if (pos < 1 || oldKey == pos) return@forEach
+                        val existing = dates[oldKey] ?: return@forEach
+                        if (!dates.containsKey(pos)) {
+                            dates[pos] = existing
+                        }
+                        dates.remove(oldKey)
+                        changed = true
+                    }
+                }
+                for (level in 1..state.earnedLevel) {
+                    val key = historyKeyFor(state.def, level)
+                    if (!dates.containsKey(key)) {
+                        dates[key] = todayStr
                         changed = true
                         if (!isBaseline) {
-                            val tierLevel = state.def.thresholds.indexOfFirst {
-                                it.tier.value == threshold.tier.value
-                            } + 1
                             newlyTieredIds.add(state.def.id)
                             freshUnlocks.add(
                                 PendingUnlock(
                                     defId = state.def.id,
-                                    tierLevel = tierLevel,
-                                    tierValue = threshold.tier.value,
+                                    tierLevel = level,
+                                    tierValue = key,
                                     date = todayStr,
-                                    prevLevel = tierLevel - 1
+                                    prevLevel = level - 1
                                 )
                             )
-                            freshBannerUnlocks.add(
-                                ProfileBannerEvent.Unlock(
-                                    defId = state.def.id,
-                                    tierLevel = tierLevel,
-                                    tierValue = threshold.tier.value,
-                                    prevLevel = tierLevel - 1,
-                                    date = todayStr
+                            val unlockKey = unlockSeenKey(state.def.id, level)
+                            if (unlockKey !in seenAtStart) {
+                                if (seen.add(unlockKey)) seenChanged = true
+                                freshBannerUnlocks.add(
+                                    ProfileBannerEvent.Unlock(
+                                        defId = state.def.id,
+                                        tierLevel = level,
+                                        tierValue = key,
+                                        prevLevel = level - 1,
+                                        date = todayStr
+                                    )
                                 )
-                            )
+                            }
                         }
                     }
                 }
@@ -630,6 +727,9 @@ class ProfileViewModel(
             }
             if (changed) {
                 userPreferencesRepository.setAchievementHistory(encodeHistory(stored))
+            }
+            if (seenChanged) {
+                userPreferencesRepository.setAchievementBannersSeen(encodeSeen(seen))
             }
             if (freshUnlocks.isNotEmpty()) {
                 _pendingUnlocks.update { it + freshUnlocks }
@@ -654,9 +754,11 @@ class ProfileViewModel(
         todayStr: String
     ) {
         try {
-            val lastVals = decodeLastValues(
-                userPreferencesRepository.userPreferencesFlow.first().achievementLastValues
-            ).toMutableMap()
+            val prefsSnapshot = userPreferencesRepository.userPreferencesFlow.first()
+            val lastVals = decodeLastValues(prefsSnapshot.achievementLastValues).toMutableMap()
+            // Achievements whose banner already showed once ever stay silent.
+            val seen = decodeSeen(prefsSnapshot.achievementBannersSeen).toMutableSet()
+            var seenChanged = false
             var changed = false
             val events = mutableListOf<ProfileBannerEvent.Progress>()
             states.forEach { state ->
@@ -673,7 +775,12 @@ class ProfileViewModel(
                     lastVals[state.def.id] = state.current
                     changed = true
                 }
-                if (last != null && state.current > last && state.def.id !in newlyTieredIds) {
+                val progressKey = progressSeenKey(state.def.id, state.earnedLevel)
+                if (last != null && state.current > last && state.def.id !in newlyTieredIds &&
+                    progressKey !in seen
+                ) {
+                    seen.add(progressKey)
+                    seenChanged = true
                     events.add(
                         ProfileBannerEvent.Progress(
                             defId = state.def.id,
@@ -686,6 +793,9 @@ class ProfileViewModel(
             }
             if (changed) {
                 userPreferencesRepository.setAchievementLastValues(encodeLastValues(lastVals))
+            }
+            if (seenChanged) {
+                userPreferencesRepository.setAchievementBannersSeen(encodeSeen(seen))
             }
             if (events.isNotEmpty()) {
                 _pendingBanners.update { it + events }
@@ -758,6 +868,12 @@ class ProfileViewModel(
         fun encodeLastValues(map: Map<String, Long>): String =
             map.entries.sortedBy { it.key }
                 .joinToString("\n") { "${it.key}\t${it.value}" }
+
+        fun decodeSeen(raw: String): Set<String> =
+            raw.split(",").map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+
+        fun encodeSeen(seen: Set<String>): String =
+            seen.sorted().joinToString(",")
 
         fun decodeDailyCounts(raw: String): Map<String, DailyCount> {
             if (raw.isBlank()) return emptyMap()

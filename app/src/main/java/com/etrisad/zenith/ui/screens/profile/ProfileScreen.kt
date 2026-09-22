@@ -21,6 +21,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -87,8 +88,10 @@ import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
@@ -168,7 +171,8 @@ fun ProfileScreen(
     preferencesRepository: UserPreferencesRepository,
     innerPadding: PaddingValues,
     onAppClick: (String) -> Unit,
-    onSeeAllAchievements: () -> Unit = {}
+    onSeeAllAchievements: () -> Unit = {},
+    onOpenLevel: () -> Unit = {}
 ) {
     val state by profileViewModel.uiState.collectAsState()
     val preferences by preferencesRepository.userPreferencesFlow.collectAsState(
@@ -182,7 +186,6 @@ fun ProfileScreen(
     var isSharing by remember { mutableStateOf(false) }
     var isEditing by rememberSaveable { mutableStateOf(false) }
     var selectedAchId by remember { mutableStateOf<String?>(null) }
-    var showXpSheet by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { profileViewModel.refresh() }
 
     val avatarPicker = rememberLauncherForActivityResult(
@@ -236,12 +239,22 @@ fun ProfileScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item(key = "identity") {
+            val equippedTitle = remember(preferences.userTitle, state.level) {
+                LEVEL_TITLES.find { it.id == preferences.userTitle }
+                    ?.takeIf { it.requiredLevel <= state.level }
+            }
+            val equippedBorder = remember(preferences.userAvatarBorder, state.level) {
+                AVATAR_BORDERS.find { it.id == preferences.userAvatarBorder }
+                    ?.takeIf { it.requiredLevel <= state.level }
+            }
             ProfileIdentityCard(
                 userName = preferences.userName,
                 userBio = preferences.userBio,
                 avatarUri = preferences.userAvatarUri,
                 bannerUri = preferences.userBannerUri,
                 level = state.level,
+                equippedTitle = equippedTitle?.name ?: "",
+                equippedBorder = equippedBorder,
                 isEditing = isEditing,
                 showBannerOnHome = preferences.profileBannerOnHome,
                 onShowBannerOnHomeChange = {
@@ -277,7 +290,7 @@ fun ProfileScreen(
                     xpTotal = state.xpTotal,
                     unlockedBadges = unlockedBadges,
                     totalBadges = state.achievements.size,
-                    onClick = { showXpSheet = true }
+                    onClick = onOpenLevel
                 )
             }
         }
@@ -388,6 +401,8 @@ fun ProfileScreen(
                                 userName = preferences.userName.ifBlank { "User" },
                                 level = state.level,
                                 xpTotal = state.xpTotal,
+                                userTitle = LEVEL_TITLES.find { it.id == preferences.userTitle }
+                                    ?.takeIf { it.requiredLevel <= state.level }?.name ?: "",
                                 streakBest = state.streakBest,
                                 topApps = state.topApps,
                                 achievements = state.achievements
@@ -500,16 +515,6 @@ fun ProfileScreen(
         }
     }
 
-    if (showXpSheet) {
-        XpDetailSheet(
-            level = state.level,
-            xpTotal = state.xpTotal,
-            xpHistory = state.xpHistory,
-            totalSavedMillis = state.totalSavedMillis,
-            formatDuration = homeViewModel::formatLongDuration,
-            onDismiss = { showXpSheet = false }
-        )
-    }
 }
 
 @Composable
@@ -652,6 +657,8 @@ private fun ProfileIdentityCard(
     avatarUri: String,
     bannerUri: String,
     level: Int,
+    equippedTitle: String,
+    equippedBorder: AvatarBorder?,
     isEditing: Boolean,
     showBannerOnHome: Boolean,
     onShowBannerOnHomeChange: (Boolean) -> Unit,
@@ -746,17 +753,36 @@ private fun ProfileIdentityCard(
                             )
                         }
                     }
-                    Surface(
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
-                        contentColor = MaterialTheme.colorScheme.primary,
-                        shape = CircleShape
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "Level $level",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-                        )
+                        Surface(
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+                            contentColor = MaterialTheme.colorScheme.primary,
+                            shape = CircleShape
+                        ) {
+                            Text(
+                                text = "Level $level",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                            )
+                        }
+                        if (equippedTitle.isNotBlank()) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.15f),
+                                contentColor = MaterialTheme.colorScheme.tertiary,
+                                shape = CircleShape
+                            ) {
+                                Text(
+                                    text = equippedTitle,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
@@ -818,6 +844,18 @@ private fun ProfileIdentityCard(
                 modifier = Modifier
                     .padding(start = 20.dp, top = 106.dp)
                     .size(88.dp)
+                    .then(
+                        if (equippedBorder != null) {
+                            Modifier
+                                .avatarRing(
+                                    equippedBorder, 4.dp,
+                                    SolidColor(MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))
+                                )
+                                .padding(4.dp)
+                        } else {
+                            Modifier
+                        }
+                    )
                     .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.tertiaryContainer),
                 contentAlignment = Alignment.Center
@@ -1122,7 +1160,8 @@ private fun XpCard(
     totalBadges: Int,
     onClick: () -> Unit
 ) {
-    val xpToNext = PROFILE_XP_PER_LEVEL - (xpTotal % PROFILE_XP_PER_LEVEL)
+    val xpToNext = xpToNextLevel(xpTotal)
+    val nextReward = remember(level) { nextLevelReward(level) }
     Card(
         onClick = onClick,
         shape = RoundedCornerShape(24.dp),
@@ -1186,137 +1225,24 @@ private fun XpCard(
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "$xpToNext XP to Level ${level + 1} - tap for details",
+                text = "$xpToNext XP to Level ${level + 1} - tap to open Level",
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary
+            )
+            Text(
+                text = nextReward?.let { (req, name) ->
+                    "Next reward: $name at Level $req"
+                } ?: "All level rewards unlocked",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.tertiary
             )
         }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
-@Composable
-private fun XpDetailSheet(
-    level: Int,
-    xpTotal: Long,
-    xpHistory: List<XpDay>,
-    totalSavedMillis: Long,
-    formatDuration: (Long) -> String,
-    onDismiss: () -> Unit
-) {
-    var showRules by remember { mutableStateOf(false) }
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = MaterialTheme.colorScheme.surface
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp)
-                .navigationBarsPadding()
-                .padding(bottom = 32.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(52.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "$level",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Black,
-                        color = MaterialTheme.colorScheme.onPrimary
-                    )
-                }
-                Spacer(modifier = Modifier.width(16.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Level $level",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Black
-                    )
-                    Text(
-                        text = "$xpTotal XP total - saved ${formatDuration(totalSavedMillis)}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                IconButton(onClick = { showRules = !showRules }) {
-                    Icon(
-                        imageVector = Icons.Outlined.Info,
-                        contentDescription = "How XP works",
-                        tint = if (showRules) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-            AnimatedVisibility(
-                visible = showRules,
-                enter = fadeIn() + expandVertically(),
-                exit = fadeOut() + shrinkVertically()
-            ) {
-                Column {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        text = "Shields earn XP for staying under the limit " +
-                            "(less usage = more XP, over the limit = 0). Goals earn " +
-                            "XP for reaching the target, plus a bonus for going over. " +
-                            "XP is awarded once per day.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(20.dp))
-            Text(
-                text = "Daily XP",
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            if (xpHistory.isEmpty()) {
-                Text(
-                    text = "No XP recorded yet - check back tomorrow",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            } else {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    xpHistory.forEach { day ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                text = prettyProfileDate(day.date),
-                                style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.weight(1f)
-                            )
-                            Text(
-                                text = "saved ${formatDuration(day.savedMillis)}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(end = 12.dp)
-                            )
-                            Text(
-                                text = "+${day.xp} XP",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Black,
-                                color = MaterialTheme.colorScheme.tertiary
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
+
+
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -1507,20 +1433,21 @@ fun AchievementDetailSheet(
                 color = MaterialTheme.colorScheme.primary
             )
             Spacer(modifier = Modifier.height(8.dp))
-            val thresholds = achievement.def.thresholds
             val level = achievement.earnedLevel
+            // Positions work past any list length (generated tiers included).
+            val beforeLevel = level - 1
+            val nextLevel = level + 1
             Row(
                 modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max),
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 TierMiniCard(
                     label = "Before",
-                    threshold = thresholds.getOrNull(level - 2),
-                    tierLevel = level - 1,
-                    tierName = achievement.def.tierNames.getOrNull(level - 2),
-                    date = thresholds.getOrNull(level - 2)?.let {
-                        achievement.unlockedDates[it.tier.value]
-                    },
+                    threshold = thresholdAtOrNull(achievement.def, beforeLevel),
+                    tierLevel = beforeLevel,
+                    tierName = tierDisplayName(achievement.def, beforeLevel)
+                        .takeIf { beforeLevel >= 1 },
+                    date = achievement.unlockedDates[historyKeyFor(achievement.def, beforeLevel)],
                     highlighted = false,
                     index = 0,
                     total = 3,
@@ -1528,12 +1455,11 @@ fun AchievementDetailSheet(
                 )
                 TierMiniCard(
                     label = "Current",
-                    threshold = thresholds.getOrNull(level - 1),
+                    threshold = thresholdAtOrNull(achievement.def, level),
                     tierLevel = level,
-                    tierName = achievement.def.tierNames.getOrNull(level - 1),
-                    date = thresholds.getOrNull(level - 1)?.let {
-                        achievement.unlockedDates[it.tier.value]
-                    },
+                    tierName = tierDisplayName(achievement.def, level)
+                        .takeIf { level >= 1 },
+                    date = achievement.unlockedDates[historyKeyFor(achievement.def, level)],
                     highlighted = true,
                     index = 1,
                     total = 3,
@@ -1541,9 +1467,9 @@ fun AchievementDetailSheet(
                 )
                 TierMiniCard(
                     label = "Next",
-                    threshold = thresholds.getOrNull(level),
-                    tierLevel = level + 1,
-                    tierName = achievement.def.tierNames.getOrNull(level),
+                    threshold = thresholdAtOrNull(achievement.def, nextLevel),
+                    tierLevel = nextLevel,
+                    tierName = tierDisplayName(achievement.def, nextLevel),
                     date = null,
                     highlighted = false,
                     index = 2,
@@ -1559,7 +1485,12 @@ fun AchievementDetailSheet(
                 color = MaterialTheme.colorScheme.primary
             )
             Spacer(modifier = Modifier.height(8.dp))
-            val history = achievement.unlockedDates.entries.sortedBy { it.key }
+            // Keys are tier positions (legacy roman values were migrated);
+            // unknown keys (def edited) are dropped.
+            val history = achievement.unlockedDates.entries.mapNotNull { (key, date) ->
+                val lvl = levelForHistoryKey(achievement.def, key)
+                if (lvl < 1) null else lvl to date
+            }.sortedBy { it.first }
             if (history.isEmpty()) {
                 Text(
                     text = "No tier unlocked yet",
@@ -1568,9 +1499,8 @@ fun AchievementDetailSheet(
                 )
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    history.forEach { (tierValue, date) ->
-                        val threshold = thresholds.find { it.tier.value == tierValue }
-                        val tierLevel = thresholds.indexOfFirst { it.tier.value == tierValue } + 1
+                    history.forEach { (tierLevel, date) ->
+                        val threshold = thresholdAtOrNull(achievement.def, tierLevel)
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.fillMaxWidth()
@@ -1808,7 +1738,7 @@ fun AchievementProgressBanner(
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "$beforeLabel → $afterLabel",
+                    text = "$beforeLabel ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ $afterLabel",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1
@@ -1957,6 +1887,7 @@ private fun renderAndShareProfile(
     userName: String,
     level: Int,
     xpTotal: Long,
+    userTitle: String,
     streakBest: Int,
     topApps: List<LifetimeApp>,
     achievements: List<AchievementState>
@@ -1964,7 +1895,7 @@ private fun renderAndShareProfile(
     return try {
         val width = 1080
         val rowH = 90
-        val height = 980 + topApps.size * rowH
+        val height = 980 + topApps.size * rowH + if (userTitle.isNotBlank()) 70 else 0
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
 
@@ -2001,6 +1932,10 @@ private fun renderAndShareProfile(
         y += 100f
         canvas.drawText(userName.take(24), 64f, y, title)
         y += 70f
+        if (userTitle.isNotBlank()) {
+            canvas.drawText(userTitle, 64f, y, accent)
+            y += 70f
+        }
         canvas.drawText("Level $level  -  $xpTotal XP  -  Best streak $streakBest days", 64f, y, sub)
 
         y += 120f
@@ -2041,7 +1976,7 @@ private fun renderAndShareProfile(
             putExtra(Intent.EXTRA_STREAM, uri)
             putExtra(
                 Intent.EXTRA_TEXT,
-                "$userName - Zenith Level $level ($xpTotal XP), best streak $streakBest days"
+                "$userName${if (userTitle.isNotBlank()) " ($userTitle)" else ""} - Zenith Level $level ($xpTotal XP), best streak $streakBest days"
             )
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }

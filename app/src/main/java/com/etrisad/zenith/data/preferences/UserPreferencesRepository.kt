@@ -249,6 +249,8 @@ class UserPreferencesRepository(private val context: Context) {
         val USER_BIO = stringPreferencesKey("user_bio")
         val USER_AVATAR_URI = stringPreferencesKey("user_avatar_uri")
         val USER_BANNER_URI = stringPreferencesKey("user_banner_uri")
+val USER_TITLE = stringPreferencesKey("user_title")
+val USER_AVATAR_BORDER = stringPreferencesKey("user_avatar_border")
         val PROFILE_BANNER_ON_HOME = booleanPreferencesKey("profile_banner_on_home")
         val USER_SHARED_PROFILE = booleanPreferencesKey("user_shared_profile")
         val INFO_VISITED_ROUTES = stringPreferencesKey("info_visited_routes")
@@ -258,6 +260,7 @@ class UserPreferencesRepository(private val context: Context) {
         val USER_XP_HISTORY = stringPreferencesKey("user_xp_history")
         val ACHIEVEMENT_LAST_VALUES = stringPreferencesKey("achievement_last_values")
         val ACHIEVEMENT_DAILY_COUNTS = stringPreferencesKey("achievement_daily_counts")
+val ACHIEVEMENT_BANNERS_SEEN = stringPreferencesKey("achievement_banners_seen")
         val EARLY_KICK_ENABLED = booleanPreferencesKey("early_kick_enabled")
         val INTERCEPT_AUDIO_FOCUS_ENABLED = booleanPreferencesKey("intercept_audio_focus_enabled")
         val SHOW_DATABASE_INDICATOR = booleanPreferencesKey("show_database_indicator")
@@ -409,6 +412,7 @@ class UserPreferencesRepository(private val context: Context) {
         val POMODORO_NEXT_BREAK_ALLOWED_TIMESTAMP = longPreferencesKey("pomodoro_next_break_allowed_timestamp")
         val POMODORO_CURRENT_SESSION_NUMBER = intPreferencesKey("pomodoro_current_session_number")
         val USER_XP_TOTAL = longPreferencesKey("user_xp_total")
+        val USER_XP_DEBUG_BASE = longPreferencesKey("user_xp_debug_base")
         val USER_XP_LAST_AWARD_DATE = stringPreferencesKey("user_xp_last_award_date")
         val USER_TOTAL_SAVED_MILLIS = longPreferencesKey("user_total_saved_millis")
     }
@@ -470,6 +474,8 @@ class UserPreferencesRepository(private val context: Context) {
             userBio = settings[PreferencesKeys.USER_BIO] ?: "",
             userAvatarUri = settings[PreferencesKeys.USER_AVATAR_URI] ?: "",
             userBannerUri = settings[PreferencesKeys.USER_BANNER_URI] ?: "",
+userTitle = settings[PreferencesKeys.USER_TITLE] ?: "",
+userAvatarBorder = settings[PreferencesKeys.USER_AVATAR_BORDER] ?: "",
             profileBannerOnHome = settings[PreferencesKeys.PROFILE_BANNER_ON_HOME] ?: false,
             userSharedProfile = settings[PreferencesKeys.USER_SHARED_PROFILE] ?: false,
             infoVisitedRoutes = settings[PreferencesKeys.INFO_VISITED_ROUTES]
@@ -479,7 +485,9 @@ class UserPreferencesRepository(private val context: Context) {
             achievementHistory = settings[PreferencesKeys.ACHIEVEMENT_HISTORY] ?: "",
             achievementLastValues = settings[PreferencesKeys.ACHIEVEMENT_LAST_VALUES] ?: "",
             achievementDailyCounts = settings[PreferencesKeys.ACHIEVEMENT_DAILY_COUNTS] ?: "",
+achievementBannersSeen = settings[PreferencesKeys.ACHIEVEMENT_BANNERS_SEEN] ?: "",
             userXpTotal = runtime[RuntimeKeys.USER_XP_TOTAL] ?: 0L,
+            userXpDebugBase = runtime[RuntimeKeys.USER_XP_DEBUG_BASE] ?: -1L,
             userXpLastAwardDate = runtime[RuntimeKeys.USER_XP_LAST_AWARD_DATE] ?: "",
             userTotalSavedMillis = runtime[RuntimeKeys.USER_TOTAL_SAVED_MILLIS] ?: 0L,
             userXpHistory = settings[PreferencesKeys.USER_XP_HISTORY] ?: "",
@@ -737,6 +745,14 @@ class UserPreferencesRepository(private val context: Context) {
         context.dataStore.edit { preferences -> preferences[PreferencesKeys.USER_BANNER_URI] = uri }
     }
 
+    suspend fun setUserTitle(titleId: String) {
+        context.dataStore.edit { preferences -> preferences[PreferencesKeys.USER_TITLE] = titleId }
+    }
+
+    suspend fun setUserAvatarBorder(borderId: String) {
+        context.dataStore.edit { preferences -> preferences[PreferencesKeys.USER_AVATAR_BORDER] = borderId }
+    }
+
     suspend fun setProfileBannerOnHome(enabled: Boolean) {
         context.dataStore.edit { preferences -> preferences[PreferencesKeys.PROFILE_BANNER_ON_HOME] = enabled }
     }
@@ -775,6 +791,10 @@ class UserPreferencesRepository(private val context: Context) {
         context.dataStore.edit { preferences -> preferences[PreferencesKeys.ACHIEVEMENT_DAILY_COUNTS] = counts }
     }
 
+    suspend fun setAchievementBannersSeen(seen: String) {
+        context.dataStore.edit { preferences -> preferences[PreferencesKeys.ACHIEVEMENT_BANNERS_SEEN] = seen }
+    }
+
     suspend fun awardDailyXp(todayDate: String, xp: Int, savedMillis: Long) {
         context.runtimeDataStore.edit { preferences ->
             preferences[RuntimeKeys.USER_XP_TOTAL] = (preferences[RuntimeKeys.USER_XP_TOTAL] ?: 0L) + xp
@@ -789,6 +809,41 @@ class UserPreferencesRepository(private val context: Context) {
             lines.add(0, "$todayDate\t$xp\t$savedMillis")
             preferences[PreferencesKeys.USER_XP_HISTORY] = lines.take(30).joinToString("\n")
         }
+    }
+
+    /**
+     * Isolated debug override for the lifetime XP total (developer
+     * settings). The pre-debug value is frozen as the base: level and
+     * rewards follow the override, but XP achievements keep computing
+     * from the base so debugging never pollutes the real collection.
+     * Setting twice without clearing keeps the original base.
+     */
+    suspend fun setUserXpTotal(xp: Long) {
+        context.runtimeDataStore.edit { preferences ->
+            if ((preferences[RuntimeKeys.USER_XP_DEBUG_BASE] ?: -1L) < 0L) {
+                preferences[RuntimeKeys.USER_XP_DEBUG_BASE] =
+                    preferences[RuntimeKeys.USER_XP_TOTAL] ?: 0L
+            }
+            preferences[RuntimeKeys.USER_XP_TOTAL] = xp.coerceAtLeast(0L)
+        }
+    }
+
+    /**
+     * Clears the debug override and restores the frozen pre-debug XP
+     * total. Returns false when no override was active. Daily XP awarded
+     * while the override was active is discarded with it.
+     */
+    suspend fun clearXpDebugOverride(): Boolean {
+        var hadOverride = false
+        context.runtimeDataStore.edit { preferences ->
+            val base = preferences[RuntimeKeys.USER_XP_DEBUG_BASE]
+            if (base != null) {
+                preferences[RuntimeKeys.USER_XP_TOTAL] = base
+                preferences.remove(RuntimeKeys.USER_XP_DEBUG_BASE)
+                hadOverride = true
+            }
+        }
+        return hadOverride
     }
 
     suspend fun setThemeConfig(themeConfig: ThemeConfig) {
@@ -1778,6 +1833,8 @@ data class UserPreferences(
     val userBio: String = "",
     val userAvatarUri: String = "",
     val userBannerUri: String = "",
+    val userTitle: String = "",
+    val userAvatarBorder: String = "",
     val profileBannerOnHome: Boolean = false,
     val userSharedProfile: Boolean = false,
     val infoVisitedRoutes: Set<String> = emptySet(),
@@ -1786,7 +1843,9 @@ data class UserPreferences(
     val achievementHistory: String = "",
     val achievementLastValues: String = "",
     val achievementDailyCounts: String = "",
+    val achievementBannersSeen: String = "",
     val userXpTotal: Long = 0L,
+    val userXpDebugBase: Long = -1L,
     val userXpLastAwardDate: String = "",
     val userTotalSavedMillis: Long = 0L,
     val userXpHistory: String = "",

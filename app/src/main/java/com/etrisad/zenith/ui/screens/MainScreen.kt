@@ -22,7 +22,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
@@ -40,8 +42,11 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import kotlin.math.roundToInt
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -80,7 +85,10 @@ import com.etrisad.zenith.ui.screens.graceperiod.GracePeriodScreen
 import com.etrisad.zenith.ui.screens.pomodoro.PomodoroScreen
 import com.etrisad.zenith.ui.screens.profile.AchievementProgressBanner
 import com.etrisad.zenith.ui.screens.profile.AchievementUnlockBanner
+import com.etrisad.zenith.ui.screens.profile.AVATAR_BORDERS
 import com.etrisad.zenith.ui.screens.profile.AchievementsScreen
+import com.etrisad.zenith.ui.screens.profile.LevelScreen
+import com.etrisad.zenith.ui.screens.profile.avatarRing
 import com.etrisad.zenith.ui.screens.profile.PendingUnlock
 import com.etrisad.zenith.ui.screens.profile.ProfileBannerEvent
 import com.etrisad.zenith.ui.screens.profile.ProfileScreen
@@ -89,7 +97,11 @@ import com.etrisad.zenith.ui.screens.profile.ProfileViewModel
 import com.etrisad.zenith.ui.screens.profile.ProfileViewModelFactory
 import com.etrisad.zenith.ui.screens.profile.formatCompactDuration
 import com.etrisad.zenith.ui.screens.profile.formatProgressNumber
+import com.etrisad.zenith.ui.screens.profile.levelForHistoryKey
+import com.etrisad.zenith.ui.screens.profile.nextThresholdFor
 import com.etrisad.zenith.ui.screens.profile.prettyProfileDate
+import com.etrisad.zenith.ui.screens.profile.requiredFor
+import com.etrisad.zenith.ui.screens.profile.tierCountFor
 import com.etrisad.zenith.ui.screens.profile.tierDisplayName
 import com.etrisad.zenith.ui.screens.profile.tierIconsForLevel
 import com.etrisad.zenith.ui.screens.settings.EyeCareScreen
@@ -218,6 +230,7 @@ fun MainScreen(
                 currentRoute == Screen.Pomodoro.route ||
                 currentRoute == Screen.Profile.route ||
                 currentRoute == Screen.Achievements.route ||
+                currentRoute == Screen.Level.route ||
                 currentRoute == Screen.PausePoint.route ||
                 currentRoute == Screen.PausePointQr.route ||
                 currentRoute?.startsWith("pause_point_type") == true ||
@@ -252,6 +265,13 @@ fun MainScreen(
 
     val homeUiState by homeViewModel.uiState.collectAsState()
     val focusUiState by focusViewModel.uiState.collectAsState()
+    val headerProfile by profileViewModel.uiState.collectAsState()
+    val headerBorder = remember(
+        preferences.userAvatarBorder, headerProfile.level
+    ) {
+        AVATAR_BORDERS.find { it.id == preferences.userAvatarBorder }
+            ?.takeIf { it.requiredLevel <= headerProfile.level }
+    }
 
     val useNavigationRail = windowSizeClass.widthSizeClass != WindowWidthSizeClass.Compact
 
@@ -440,6 +460,7 @@ fun MainScreen(
                     currentRoute != Screen.Pomodoro.route &&
                     currentRoute != Screen.Profile.route &&
                     currentRoute != Screen.Achievements.route &&
+                    currentRoute != Screen.Level.route &&
                     currentRoute != Screen.PausePoint.route &&
                     currentRoute != Screen.PausePointQr.route &&
                     currentRoute?.startsWith("pause_point_type") == false &&
@@ -636,11 +657,50 @@ fun MainScreen(
                                             onClick = { navController.navigate(Screen.Profile.route) },
                                             modifier = Modifier.padding(end = 12.dp).size(48.dp).clip(CircleShape)
                                         ) {
-                                            Icon(
-                                                imageVector = Icons.Outlined.AccountCircle,
-                                                contentDescription = "User Profile",
-                                                modifier = Modifier.size(24.dp)
-                                            )
+                                            if (preferences.userAvatarUri.isEmpty()) {
+                                                Icon(
+                                                    imageVector = Icons.Outlined.AccountCircle,
+                                                    contentDescription = "User Profile",
+                                                    modifier = Modifier.size(24.dp)
+                                                )
+                                            } else {
+                                                var headerImgError by remember(preferences.userAvatarUri) {
+                                                    mutableStateOf(false)
+                                                }
+                                                if (headerImgError) {
+                                                    Icon(
+                                                        imageVector = Icons.Outlined.AccountCircle,
+                                                        contentDescription = "User Profile",
+                                                        modifier = Modifier.size(24.dp)
+                                                    )
+                                                } else {
+                                                    AsyncImage(
+                                                        model = ImageRequest.Builder(context)
+                                                            .data(preferences.userAvatarUri)
+                                                            .crossfade(300).build(),
+                                                        contentDescription = "User Profile",
+                                                        contentScale = ContentScale.Crop,
+                                                        onError = { headerImgError = true },
+                                                        modifier = Modifier
+                                                            .size(32.dp)
+                                                            .then(
+                                                                if (headerBorder != null) {
+                                                                    Modifier
+                                                                        .avatarRing(
+                                                                            headerBorder, 2.dp,
+                                                                            SolidColor(
+                                                                                MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
+                                                                            )
+                                                                        )
+                                                                        .padding(2.dp)
+                                                                } else {
+                                                                    Modifier
+                                                                }
+                                                            )
+                                                            .clip(CircleShape)
+                                                    )
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -829,6 +889,7 @@ fun MainScreen(
                                     targetRoute == Screen.Pomodoro.route ||
                                     targetRoute == Screen.Profile.route ||
                                     targetRoute == Screen.Achievements.route ||
+                            targetRoute == Screen.Level.route ||
                                     targetRoute == Screen.PausePoint.route ||
                                     targetRoute == Screen.PausePointQr.route ||
                                     targetRoute?.startsWith("pause_point_type") == true ||
@@ -850,6 +911,7 @@ fun MainScreen(
                                     initialRoute == Screen.Pomodoro.route ||
                                     initialRoute == Screen.Profile.route ||
                                     initialRoute == Screen.Achievements.route ||
+                            initialRoute == Screen.Level.route ||
                                     initialRoute == Screen.PausePoint.route ||
                                     initialRoute == Screen.PausePointQr.route ||
                                     initialRoute?.startsWith("pause_point_type") == true ||
@@ -903,6 +965,7 @@ fun MainScreen(
                                     targetRoute == Screen.Pomodoro.route ||
                                     targetRoute == Screen.Profile.route ||
                                     targetRoute == Screen.Achievements.route ||
+                            targetRoute == Screen.Level.route ||
                                     targetRoute == Screen.PausePoint.route ||
                                     targetRoute == Screen.PausePointQr.route ||
                                     targetRoute?.startsWith("pause_point_type") == true ||
@@ -925,6 +988,7 @@ fun MainScreen(
                                     initialRoute == Screen.Pomodoro.route ||
                                     initialRoute == Screen.Profile.route ||
                                     initialRoute == Screen.Achievements.route ||
+                            initialRoute == Screen.Level.route ||
                                     initialRoute == Screen.PausePoint.route ||
                                     initialRoute == Screen.PausePointQr.route ||
                                     initialRoute?.startsWith("pause_point_type") == true ||
@@ -1086,7 +1150,17 @@ fun MainScreen(
                             },
                             onSeeAllAchievements = {
                                 navController.navigate(Screen.Achievements.route)
+                            },
+                            onOpenLevel = {
+                                navController.navigate(Screen.Level.route)
                             }
+                        )
+                    }
+                    composable(Screen.Level.route) {
+                        LevelScreen(
+                            profileViewModel = profileViewModel,
+                            preferencesRepository = userPreferencesRepository,
+                            innerPadding = innerPadding
                         )
                     }
                     composable(
@@ -1253,6 +1327,7 @@ fun MainScreen(
                             currentRoute != Screen.Pomodoro.route &&
                             currentRoute != Screen.Profile.route &&
                             currentRoute != Screen.Achievements.route &&
+                    currentRoute != Screen.Level.route &&
                             currentRoute != Screen.PausePoint.route &&
                             currentRoute != Screen.PausePointQr.route &&
                             currentRoute?.startsWith("pause_point_type") == false &&
@@ -1455,9 +1530,12 @@ private fun NotificationCenterSheet(
             (event as? ProfileBannerEvent.Unlock)?.let { it.defId to it.tierValue }
         }.toSet()
         achievements.flatMap { state ->
-            state.unlockedDates.mapNotNull { (tierValue, date) ->
-                if (state.def.id to tierValue in pendingKeys) null
-                else Triple(state.def, tierValue, date)
+            state.unlockedDates.mapNotNull { (key, date) ->
+                if (state.def.id to key in pendingKeys) null
+                else {
+                    val level = levelForHistoryKey(state.def, key)
+                    if (level < 1) null else Triple(state.def, level, date)
+                }
             }
         }.sortedByDescending { it.third }.take(8)
     }
@@ -1513,7 +1591,7 @@ private fun NotificationCenterSheet(
                                 name to "Achievement unlocked - ${prettyProfileDate(event.date)}"
                             }
                             is ProfileBannerEvent.Progress -> {
-                                val level = def?.thresholds?.count { event.after >= it.required } ?: 0
+                                val level = def?.let { tierCountFor(it, event.after) } ?: 0
                                 val name = def?.let { tierDisplayName(it, level) } ?: "Progress"
                                 name to "${formatProgressNumber(event.defId, event.before)} → ${
                                     formatProgressNumber(event.defId, event.after)
@@ -1593,8 +1671,7 @@ private fun NotificationCenterSheet(
                 )
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    recent.forEachIndexed { index, (def, tierValue, date) ->
-                        val level = def.thresholds.indexOfFirst { it.tier.value == tierValue } + 1
+                    recent.forEachIndexed { index, (def, level, date) ->
                         Card(
                             onClick = onOpenRecent,
                             shape = notifGroupShape(index, recent.size),
@@ -1697,9 +1774,8 @@ private fun GlobalAchievementBanners(
     LaunchedEffect(currentBanner) {
         if (currentBanner != null) {
             val isFull = (currentBanner as? ProfileBannerEvent.Progress)?.let { banner ->
-                val thresholds = profileUiState.achievements.find { it.def.id == banner.defId }?.def?.thresholds
-                val nextReq = thresholds?.firstOrNull { banner.after < it.required }?.required
-                nextReq == null || banner.after >= (nextReq ?: Long.MAX_VALUE)
+                val def = profileUiState.achievements.find { it.def.id == banner.defId }?.def
+                def == null || nextThresholdFor(def, banner.after) == null
             } ?: false
             delay(
                 if (currentBanner is ProfileBannerEvent.Progress) {
@@ -1791,26 +1867,24 @@ private fun GlobalAchievementBanners(
                     )
                 }
                 is ProfileBannerEvent.Progress -> {
-                    val thresholds = bannerState?.def?.thresholds
-                    val tierUpThreshold = thresholds?.firstOrNull {
-                        banner.after >= it.required && banner.before < it.required
-                    }
+                    val def = bannerState?.def
+                    val levelBefore = def?.let { tierCountFor(it, banner.before) } ?: 0
+                    val levelAfter = def?.let { tierCountFor(it, banner.after) } ?: 0
                     val isFull: Boolean
                     val beforeFraction: Float
                     val afterFraction: Float
                     val progressTitle: String
                     val tierSymbols: List<androidx.compose.ui.graphics.vector.ImageVector>
-                    if (tierUpThreshold != null) {
-                        val level = (thresholds?.indexOf(tierUpThreshold) ?: -1) + 1
-                        beforeFraction = (banner.before.toFloat() / tierUpThreshold.required).coerceIn(0f, 1f)
+                    if (def != null && levelAfter > levelBefore) {
+                        val req = requiredFor(def, levelAfter).coerceAtLeast(1L)
+                        beforeFraction = (banner.before.toFloat() / req).coerceIn(0f, 1f)
                         afterFraction = 1f
-                        progressTitle = bannerState?.def?.let { tierDisplayName(it, level) } ?: "Progress"
-                        tierSymbols = tierIconsForLevel(level)
+                        progressTitle = tierDisplayName(def, levelAfter)
+                        tierSymbols = tierIconsForLevel(levelAfter)
                         isFull = true
                     } else {
-                        val afterLevel = thresholds?.count { banner.after >= it.required } ?: 0
-                        progressTitle = bannerState?.def?.let { tierDisplayName(it, afterLevel) } ?: "Progress"
-                        val nextReq = thresholds?.firstOrNull { banner.after < it.required }?.required
+                        progressTitle = def?.let { tierDisplayName(it, levelAfter) } ?: "Progress"
+                        val nextReq = def?.let { nextThresholdFor(it, banner.after) }?.required
                         beforeFraction = if (nextReq != null && nextReq > 0) (banner.before.toFloat() / nextReq).coerceIn(0f, 1f) else 1f
                         afterFraction = if (nextReq != null && nextReq > 0) (banner.after.toFloat() / nextReq).coerceIn(0f, 1f) else 1f
                         tierSymbols = emptyList()
