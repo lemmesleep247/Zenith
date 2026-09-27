@@ -231,9 +231,6 @@ class AppUsageMonitorService : Service() {
                 if (!isScreenOn) {
                     Log.d("Zenith_SCREEN", "SCREEN_OFF_GOAL_CHECK: running checkGoalReminders()")
                     serviceScope.launch {
-                        // After a process restart the in-memory shield cache is
-                        // empty and checkGoalReminders() would silently return;
-                        // load it first so a revived process still fires.
                         ensureGoalCacheLoaded()
                         checkGoalReminders()
                         scheduleScreenOffGoalAlarm()
@@ -391,9 +388,6 @@ class AppUsageMonitorService : Service() {
         serviceScope.launch {
             com.etrisad.zenith.util.ScreenUsageHelper.clearCache()
             updateStreaks()
-            preferencesRepository.refreshGlobalStreak(shieldRepository)
-            preferencesRepository.refreshAppStreaks(shieldRepository)
-            preferencesRepository.refreshWebStreaks(shieldRepository)
             shieldRepository.resetDailyRemainingTimes()
             checkWeeklyReset()
             SharedMonitoringState.notifiedGoals.clear()
@@ -511,13 +505,6 @@ class AppUsageMonitorService : Service() {
     }
 
     private var lastGoalReminderCheckTime = 0L
-
-    /**
-     * Loads shields into the in-memory cache when it is empty (fresh process
-     * after a screen-off revival). Without this, checkGoalReminders() sees an
-     * empty goalShieldsCache and returns silently, and the reschedule gate in
-     * scheduleScreenOffGoalAlarm() stops the whole screen-off chain.
-     */
     private suspend fun ensureGoalCacheLoaded() {
         if (SharedMonitoringState.goalShieldsCache.isNotEmpty()) return
         try {
@@ -1312,7 +1299,11 @@ class AppUsageMonitorService : Service() {
                         lastKickedPackage = currentApp
                         goToHomeScreen()
                         allowedApps.remove(currentApp)
+                        // Allowed session over: drop HUD now, otherwise its coarse
+                        // timer freezes a stale secondsLeft that resurrects on re-entry.
+                        sessionUsageOverlayManager.hideHUD(currentApp)
                     } else if (!InterceptOverlayManager.isShowing) {
+                        if (isAllowedExpired) sessionUsageOverlayManager.hideHUD(currentApp)
                         checkIfAppIsShielded(currentApp)
                     }
                     lastForegroundApp = currentApp
@@ -1335,6 +1326,7 @@ class AppUsageMonitorService : Service() {
                             lastKickedPackage = wsPkg
                             goToHomeScreen()
                             allowedApps.remove(wsPkg)
+                            sessionUsageOverlayManager.hideHUD(wsPkg)
                         }
                     }
                 }
@@ -1448,6 +1440,9 @@ class AppUsageMonitorService : Service() {
                             lastKickedPackage = currentApp
                             goToHomeScreen()
                             allowedApps.remove(currentApp)
+                            // Allowed session expired via autoQuit kick: HUD must die
+                            // here or its frozen secondsLeft reappears on re-entry.
+                            sessionUsageOverlayManager.hideHUD(currentApp)
                             if (sh.isDelayAppEnabled) {
                                 serviceScope.launch {
                                     shieldRepository.updateShield(sh.copy(lastDelayStartTimestamp = 0L))
@@ -1456,11 +1451,13 @@ class AppUsageMonitorService : Service() {
                             }
                         } else {
                             allowedApps.remove(currentApp)
+                            sessionUsageOverlayManager.hideHUD(currentApp)
                             checkIfAppIsShielded(currentApp)
                         }
                     } else {
                         if (allowedUntilVal != null && allowedUntilVal > 0) {
                             allowedApps.remove(currentApp)
+                            sessionUsageOverlayManager.hideHUD(currentApp)
                         }
                         checkIfAppIsShielded(currentApp)
                     }

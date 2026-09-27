@@ -108,6 +108,30 @@ class InterceptOverlayManager(
         fun isSystemUiPackage(packageName: String): Boolean = packageName in SYSTEM_UI_PACKAGES
         private var keyboardPackages = emptySet<String>()
         private var lastKeyboardRefreshTime = 0L
+
+        @Volatile
+        var activeInstance: InterceptOverlayManager? = null
+            private set
+        @Volatile
+        var retainedPauseTask: com.etrisad.zenith.ui.components.pausepoint.PausePointTask? = null
+        @Volatile
+        var retainedPauseTaskForPackage: String? = null
+
+        /**
+         * Hide the currently showing overlay so the NFC scanner activity is
+         * visible and touchable. Returns true if an overlay was hidden.
+         */
+        fun hideActiveOverlayForNfcScan(): Boolean {
+            val manager = activeInstance ?: return false
+            if (!isShowing) return false
+            manager.hideOverlay()
+            return true
+        }
+
+        fun clearRetainedPauseTask() {
+            retainedPauseTask = null
+            retainedPauseTaskForPackage = null
+        }
     }
 
     private fun updateOverlayContent(
@@ -604,6 +628,7 @@ class InterceptOverlayManager(
                 windowManager.addView(composeView, params)
                 overlayView = composeView
                 overlayWindowParams = params
+                activeInstance = this@InterceptOverlayManager
             }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -982,6 +1007,9 @@ class InterceptOverlayManager(
     fun destroy() {
         hideOverlay()
         managerScope.cancel()
+        synchronized(this) {
+            if (activeInstance === this) activeInstance = null
+        }
     }
 
     private class MyLifecycleOwner : LifecycleOwner, SavedStateRegistryOwner {

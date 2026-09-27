@@ -20,7 +20,6 @@ object FeatureInfoRegistry {
         route == Screen.Profile.route -> profile
         route == Screen.Achievements.route -> achievements
         route == Screen.Level.route -> level
-        route == Screen.PausePointQr.route -> pausePointQr
         route?.startsWith("pause_point_type") == true -> pausePointType
         route == Screen.OverlayAppearance.route -> overlayAppearance
         route == Screen.GSFlexCustomizer.route -> gsFlexCustomizer
@@ -54,7 +53,7 @@ object FeatureInfoRegistry {
                 "Quick Actions row (Bedtime, Alarm, Stats, Pomodoro) and Apps/Websites tabs with active Goals & Shields."
             ),
             FeatureInfoSections.tips(
-                "Tap the dashboard to change your daily target — presets like 2h/4h/6h are available.",
+                "Tap the dashboard to change your daily target, presets like 2h/4h/6h are available.",
                 "Pull down anywhere to refresh your stats.",
                 "New installs need about 3 days of data before history and trends become reliable."
             )
@@ -77,7 +76,7 @@ object FeatureInfoRegistry {
             ),
             FeatureInfoSections.tips(
                 "Long-press any item to enter multi-selection mode, then long-press again to toggle more items.",
-                "Deleting requires completing the 3-lever confirmation puzzle on purpose — friction helps you reconsider.",
+                "Deleting requires completing the 3-lever confirmation puzzle on purpose, friction helps you reconsider.",
                 "Website shielding needs the Accessibility Service enabled."
             )
         )
@@ -107,7 +106,7 @@ object FeatureInfoRegistry {
 
     private val usageStats = FeatureInfo(
         title = "Usage Stats",
-        summary = "Deep-dive analytics of your screen time by day, hour, app, website, and focus category — plus personal insights.",
+        summary = "Deep-dive analytics of your screen time by day, hour, app, website, and focus category, plus personal insights.",
         sections = listOf(
             FeatureInfoSections.whatItDoes(
                 "Breaks usage down into Shield / Goal / Other categories and shows where your hours actually go.",
@@ -121,7 +120,7 @@ object FeatureInfoRegistry {
             FeatureInfoSections.tips(
                 "Tap a donut segment to highlight that category across the charts.",
                 "Tap any hour bar to expand its app breakdown; tap the Time Profile card to jump to your peak hour.",
-                "Pull down to refresh — with Smart Repair enabled it also recalculates inconsistent records."
+                "Pull down to refresh, with Smart Repair enabled it also recalculates inconsistent records."
             )
         )
     )
@@ -141,7 +140,7 @@ object FeatureInfoRegistry {
             ),
             FeatureInfoSections.tips(
                 "Turning bedtime OFF mid-window intentionally requires the hardest confirmation (10 levers in 10 seconds).",
-                "Add trusted apps (e.g. music, phone) to Allowed Apps so they bypass blocking.",
+                "Add trusted apps (e.g. music, phone) to Allowed Apps so they skip the bedtime block, their Shields and Goals still apply.",
                 "Tap an activity bar to see exactly which apps were used at that hour."
             )
         )
@@ -170,11 +169,11 @@ object FeatureInfoRegistry {
 
     private val gracePeriod = FeatureInfo(
         title = "Grace Period",
-        summary = "A scheduled daily window in which every Zenith restriction is lifted — making blocking sustainable instead of absolute.",
+        summary = "A scheduled daily window in which every Zenith restriction is lifted, making blocking sustainable instead of absolute.",
         sections = listOf(
             FeatureInfoSections.whatItDoes(
                 "During the window, shields, schedules, and bedtime will not block any app.",
-                "Outside the window, all protections return automatically — no manual re-enabling needed."
+                "Outside the window, all protections return automatically, no manual re-enabling needed."
             ),
             FeatureInfoSections.whatYoullSee(
                 "A toggle card, a pulsing countdown ring ('Grace period ends in…' / 'Starts in…'), and time pickers.",
@@ -182,7 +181,7 @@ object FeatureInfoRegistry {
                 "An info card explaining the override behavior."
             ),
             FeatureInfoSections.tips(
-                "Plan a realistic window (e.g. lunch break) rather than toggling impulsively — disabling mid-session requires the 10-lever confirmation.",
+                "Plan a realistic window (e.g. lunch break) rather than toggling impulsively, disabling mid-session requires the 10-lever confirmation.",
                 "Wrap-around times are supported, so windows can span midnight.",
                 "Combine with Lockdown if you want editing protected while grace period is off."
             )
@@ -202,9 +201,9 @@ object FeatureInfoRegistry {
                 "While active, a full-screen rest overlay appears when work time expires."
             ),
             FeatureInfoSections.tips(
-                "Classic guidance is ~20 minutes of work followed by ~20 seconds looking away — both sliders let you adapt it.",
+                "Classic guidance is ~20 minutes of work followed by ~20 seconds looking away, both sliders let you adapt it.",
                 "Sliders commit on release, so drag freely until the value feels right.",
-                "The break overlay is intentionally unskippable — that's the point."
+                "The break overlay is intentionally unskippable, that's the point."
             )
         )
     )
@@ -232,7 +231,7 @@ object FeatureInfoRegistry {
 
     private val lockdown = FeatureInfo(
         title = "Lockdown",
-        summary = "Schedule hours during which Focus-screen editing is completely blocked — protecting your controls from your future self.",
+        summary = "Schedule hours during which Focus-screen editing is completely blocked, protecting your controls from your future self.",
         sections = listOf(
             FeatureInfoSections.whatItDoes(
                 "During lockdown hours you cannot add, edit, or delete shields, goals, or schedules.",
@@ -252,7 +251,7 @@ object FeatureInfoRegistry {
 
     private val pomodoro = FeatureInfo(
         title = "Pomodoro",
-        summary = "A focus timer that breaks work into sessions separated by short breaks — with optional app lockdown during sessions.",
+        summary = "A focus timer that breaks work into sessions separated by short breaks, with optional app lockdown during sessions.",
         sections = listOf(
             FeatureInfoSections.whatItDoes(
                 "Runs repeating focus/break cycles with configurable lengths, session counts, and long-break cadence.",
@@ -265,7 +264,7 @@ object FeatureInfoRegistry {
             ),
             FeatureInfoSections.tips(
                 "Emptying the allowed-apps selection means every app is blocked during sessions.",
-                "Ending a session early requires the 10-lever confirmation — commit before you start.",
+                "Ending a session early requires the 10-lever confirmation, commit before you start.",
                 "Try 'Pauseable Session' if you need legit interruptions without losing progress."
             )
         )
@@ -273,7 +272,7 @@ object FeatureInfoRegistry {
 
     private val pausePoint = FeatureInfo(
         title = "Pause Point",
-        summary = "Requires completing a small task before a block overlay lets you through — a speed bump against mindless unblocking.",
+        summary = "Requires completing a small task before a block overlay lets you through, a speed bump against mindless unblocking.",
         sections = listOf(
             FeatureInfoSections.whatItDoes(
                 "When an interception fires, a random enabled task must be completed before continuing.",
@@ -286,7 +285,7 @@ object FeatureInfoRegistry {
             ),
             FeatureInfoSections.tips(
                 "Enable multiple task types so the challenge stays unpredictable.",
-                "If you enable QR scanning, register codes first — otherwise the task cannot be satisfied.",
+                "If you enable QR scanning, register codes first, otherwise the task cannot be satisfied.",
                 "Fewer enabled types = faster unblock, more types = stronger friction."
             )
         )
@@ -294,7 +293,7 @@ object FeatureInfoRegistry {
 
     private val profile = FeatureInfo(
         title = "Profile",
-        summary = "Your identity, lifetime top apps, activity heatmap, streak, XP level, and achievements — all computed offline.",
+        summary = "Your identity, lifetime top apps, activity heatmap, streak, XP level, and achievements, all computed offline.",
         sections = listOf(
             FeatureInfoSections.whatItDoes(
                 "Shows your banner, photo, name, and bio (tap the edit icons to change them).",
@@ -307,7 +306,7 @@ object FeatureInfoRegistry {
             ),
             FeatureInfoSections.tips(
                 "XP is awarded once per day: shields pay for unused headroom, goals pay for reaching or passing the target.",
-                "Achievement tiers use custom roman numerals — collect higher tiers by growing streaks and saved time."
+                "Achievement tiers use custom roman numerals, collect higher tiers by growing streaks and saved time."
             )
         )
     )
@@ -335,7 +334,7 @@ object FeatureInfoRegistry {
         summary = "Your XP level, level rewards, and daily XP history.",
         sections = listOf(
             FeatureInfoSections.whatItDoes(
-                "Tracks total XP and shows progress to the next level — each level needs more XP than the last.",
+                "Tracks total XP and shows progress to the next level, each level needs more XP than the last.",
                 "Level milestones unlock titles and avatar borders you can equip from the card rows."
             ),
             FeatureInfoSections.whatYoullSee(
@@ -351,26 +350,6 @@ object FeatureInfoRegistry {
         )
     )
 
-    private val pausePointQr = FeatureInfo(
-        title = "QR Codes",
-        summary = "Register the physical QR codes accepted by the Pause Point QR-scan task.",
-        sections = listOf(
-            FeatureInfoSections.whatItDoes(
-                "Scans and saves QR codes that Pause Point will later demand when you try to unblock an app.",
-                "Any saved code satisfies the task — so put them somewhere getting up matters."
-            ),
-            FeatureInfoSections.whatYoullSee(
-                "A live camera scanner preview (with permission fallback) and a 'Code saved!' banner.",
-                "A Saved Codes list where each entry can be copied or deleted."
-            ),
-            FeatureInfoSections.tips(
-                "Print codes and stick them far from your desk — fridge, another room — to add real friction.",
-                "Keep at least one spare code registered in case one gets lost.",
-                "Codes are stored locally; delete ones you no longer use."
-            )
-        )
-    )
-
     private val pausePointType = FeatureInfo(
         title = "Pause Point Task",
         summary = "Tune exactly how each Pause Point task behaves so the difficulty matches your intent.",
@@ -381,11 +360,13 @@ object FeatureInfoRegistry {
             ),
             FeatureInfoSections.whatYoullSee(
                 "A header card describing the task type.",
-                "Per-type controls — e.g. wait duration, breathing rounds, steps, grid size, math range, counting target, or the typing-text pool."
+                "Per-type controls, e.g. wait duration, breathing rounds, steps, grid size, math range, counting target, or the typing-text pool.",
+                "QR Scan and NFC Scan register their codes and tags right here on this screen."
             ),
             FeatureInfoSections.tips(
                 "Changes save instantly and apply to the next generated pause task.",
-                "QR Scan links to the Saved QR Codes screen; Choose App uses your goal apps automatically.",
+                "If you enable QR scanning, register codes first, otherwise the task cannot be satisfied. Same for NFC tags.",
+                "Choose App uses your goal apps automatically.",
                 "Defaults match the original values, so untouched tasks behave exactly as before."
             )
         )
@@ -405,7 +386,7 @@ object FeatureInfoRegistry {
             FeatureInfoSections.tips(
                 "Watch the preview while dragging the opacity slider to find a level that's visible but not blinding.",
                 "Custom unlocks a hue slider for a fully personal palette.",
-                "Full-screen makes the sheet fill the display — useful if small sheets tempt you to peek around them."
+                "Full-screen makes the sheet fill the display, useful if small sheets tempt you to peek around them."
             )
         )
     )
@@ -442,7 +423,7 @@ object FeatureInfoRegistry {
             ),
             FeatureInfoSections.tips(
                 "Incentive Lock gives bonus uses at 25%/50% goal completion; disabling it starts a 1-hour countdown you can still cancel.",
-                "Early Kick ejects you from an app 5 minutes before its limit — great as a warning system."
+                "Early Kick ejects you from an app 5 minutes before its limit, great as a warning system."
             )
         )
     )
@@ -478,7 +459,7 @@ object FeatureInfoRegistry {
                 "Selectable profile circles, unused-hours time pickers, and threshold sliders with reset buttons."
             ),
             FeatureInfoSections.tips(
-                "Changes here must be applied via the floating Apply Settings button before leaving — Back is intercepted until then.",
+                "Changes here must be applied via the floating Apply Settings button before leaving, Back is intercepted until then.",
                 "If detection feels slow, raise the profile first before touching custom sliders.",
                 "Enabling Instant Detection improves accuracy but asks for the accessibility service."
             )
@@ -499,7 +480,7 @@ object FeatureInfoRegistry {
             ),
             FeatureInfoSections.tips(
                 "Pick a cloud-synced folder (e.g. Drive) as the auto-backup location for off-device safety.",
-                "Restore shows a metadata confirmation sheet first — verify the date before proceeding."
+                "Restore shows a metadata confirmation sheet first, verify the date before proceeding."
             )
         )
     )
@@ -518,7 +499,7 @@ object FeatureInfoRegistry {
             ),
             FeatureInfoSections.tips(
                 "Prefer Smart Repair over manual edits unless you know exactly what you're changing.",
-                "Log viewers are invaluable when reporting bugs — attach their output."
+                "Log viewers are invaluable when reporting bugs, attach their output."
             )
         )
     )
@@ -554,7 +535,7 @@ object FeatureInfoRegistry {
             ),
             FeatureInfoSections.tips(
                 "Run this after reinstalling the app or changing system clock settings.",
-                "Advanced mode can overwrite existing records — use it only when values look clearly wrong."
+                "Advanced mode can overwrite existing records, use it only when values look clearly wrong."
             )
         )
     )
@@ -570,7 +551,7 @@ object FeatureInfoRegistry {
                 "A 'System Usage (21 Days)' chart with explanatory text about the calculation method."
             ),
             FeatureInfoSections.tips(
-                "Read-only by design — nothing here modifies your data.",
+                "Read-only by design, nothing here modifies your data.",
                 "Use it to verify whether a mismatch comes from Android itself or from Zenith's storage."
             )
         )

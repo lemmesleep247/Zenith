@@ -400,6 +400,8 @@ class OverlayActionHandler(
                 if (activeDomain != sessionDomain) {
                     Log.d("Zenith_BT", "Timer EXIT: website changed for $packageName (active=$activeDomain)")
                     allowedApps.remove(packageName)
+                    // Session ended: ensure stale HUD cannot be resurrected on re-entry.
+                    sessionUsageOverlayManager.hideHUD(packageName)
                     return@Runnable
                 }
                 if (fg == null || !WebsiteRepository.isKnownBrowser(fg)) {
@@ -428,9 +430,17 @@ class OverlayActionHandler(
             val shield = s ?: mindful
             if (shield == null) {
                 Log.d("Zenith_BT", "Timer EXIT: shield not found for $packageName")
+                // No shield to re-block, but the allowed session is over: drop stale HUD.
+                sessionUsageOverlayManager.hideHUD(packageName)
                 return@Runnable
             }
             Log.d("Zenith_BT", "Timer EXECUTING action for $packageName (autoQuit=${shield.isAutoQuitEnabled})")
+            // The allowed session has expired. The HUD runs on its own coarse timer
+            // (10s/20s/30s/60s ticks) so its secondsLeft is typically still > 0 here
+            // (e.g. 30s left). If we don't hide it now, going to home cancels the HUD
+            // timer via updateForegroundApp() and freezes that stale value; on re-entry
+            // the stale HUD is resurrected next to the correctly reshown block overlay.
+            sessionUsageOverlayManager.hideHUD(packageName)
             if (shield.isAutoQuitEnabled) {
                 goToHomeScreen()
             } else {
@@ -889,9 +899,6 @@ class OverlayActionHandler(
         val isBedtimeOrWindDown = SharedMonitoringState.isBedtimeActive || (SharedMonitoringState.isWindDownActive && prefs?.bedtimeWindDownEnabled == true)
 
         if (packageName in SharedMonitoringState.whitelistedPackages) return true
-
-        if (isBedtimeOrWindDown && packageName in SharedMonitoringState.bedtimeWhitelistedPackages) return true
-
         if (isKeyboardApp(packageName)) return true
 
         if (packageName in SharedMonitoringState.CRITICAL_SYSTEM_PACKAGES) return true
@@ -1029,7 +1036,6 @@ class OverlayActionHandler(
                 showBedtimeOverlay(packageName)
                 return true
             }
-            return false
         }
 
         if (SharedMonitoringState.isWindDownActive && prefs.bedtimeWindDownEnabled) {
@@ -1038,7 +1044,6 @@ class OverlayActionHandler(
                 showWindDownOverlay(packageName, sessionUsed, recheckSchedules)
                 return true
             }
-            return false
         }
 
         val schedules = SharedMonitoringState.parsedSchedulesCache

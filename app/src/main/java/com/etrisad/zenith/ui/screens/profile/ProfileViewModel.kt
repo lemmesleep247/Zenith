@@ -62,12 +62,6 @@ data class XpDay(
     val xp: Int,
     val savedMillis: Long
 )
-
-/**
- * Day-gated counter for a day-based achievement: how many qualifying days
- * have been counted, and which date was counted last. Persisted so cold
- * starts can never inflate the count — at most +1 per calendar day.
- */
 data class DailyCount(
     val count: Int,
     val lastDate: String
@@ -75,7 +69,7 @@ data class DailyCount(
 fun com.etrisad.zenith.data.preferences.UserPreferences.achievementTrackingKey(): String {
     return listOf(
         globalBestStreak, globalCurrentStreak, bedtimeBestStreak,
-        alarmsJson, pausePointEnabled, pausePointQrCodes.size,
+        alarmsJson, pausePointEnabled, pausePointQrCodes.size, pausePointNfcTagIds.size,
         eyeCareEnabled, gracePeriodEnabled, lockdownEnabled,
         pomodoroSessionEndTimestamp, pomodoroPresets,
         expressiveColors, autoBackupEnabled, lastBackupTimestamp,
@@ -85,7 +79,7 @@ fun com.etrisad.zenith.data.preferences.UserPreferences.achievementTrackingKey()
         websiteAutoTrackingEnabled, developerModeEnabled,
         performanceLevel.name, smartRepairOnRefresh,
         excludedFromTrackingPackages.size, bedtimeWindDownEnabled,
-        pausePointTaskTypes.size, pausePointQrCodes.size,
+        pausePointTaskTypes.size, pausePointQrCodes.size, pausePointNfcTagIds.size,
         userSharedProfile, globalCurrentStreak, userXpTotal,
         overlayPaletteId, floatingTabBarEnabled, totalUsagePillEnabled,
         incentiveLockEnabled, earlyKickEnabled, batteryStatsResetEnabled,
@@ -257,7 +251,7 @@ class ProfileViewModel(
                 // Day-gated counters for day-based achievements (historian,
                 // weekend_warrior, night_owl_lite, early_bird). Each id
                 // increments at most once per calendar day, and only when
-                // that day's condition holds — cold starts never inflate them.
+                // that day's condition holds, cold starts never inflate them.
                 val trackedDates = try {
                     shieldRepository.getAllTrackedDates().toSet()
                 } catch (_: Exception) { emptySet() }
@@ -301,6 +295,7 @@ class ProfileViewModel(
                     hasGoal = shields.any { it.type == FocusType.GOAL },
                     hasSchedule = schedules.isNotEmpty(),
                     hasQr = freshPrefs.pausePointQrCodes.isNotEmpty(),
+                    hasNfc = freshPrefs.pausePointNfcTagIds.isNotEmpty(),
                     hasPreset = freshPrefs.pomodoroPresets.trim() != "{}",
                     hasCustomTheme = freshPrefs.expressiveColors,
                     hasBackup = freshPrefs.autoBackupEnabled || freshPrefs.lastBackupTimestamp > 0L,
@@ -336,6 +331,7 @@ class ProfileViewModel(
                     } catch (_: Exception) { 0 },
                     goalCount = shields.count { it.type == FocusType.GOAL },
                     qrCount = freshPrefs.pausePointQrCodes.size,
+                    nfcCount = freshPrefs.pausePointNfcTagIds.size,
                     taskTypeCount = freshPrefs.pausePointTaskTypes.size,
                     // While a debug XP override is active, achievements
                     // compute from the frozen pre-debug base so debugging
@@ -652,7 +648,7 @@ class ProfileViewModel(
         return try {
             val prefsSnapshot = userPreferencesRepository.userPreferencesFlow.first()
             val rawBefore = prefsSnapshot.achievementHistory
-            // Per-tier banner keys already shown — never enqueue the same one again.
+            // Per-tier banner keys already shown, never enqueue the same one again.
             val seen = decodeSeen(prefsSnapshot.achievementBannersSeen).toMutableSet()
             var seenChanged = false
             // First run seeds the baseline silently so existing progress
