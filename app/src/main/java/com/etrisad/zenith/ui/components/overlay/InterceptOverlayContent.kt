@@ -207,7 +207,7 @@ fun InterceptOverlayContent(
     var showSheet by remember { mutableStateOf(false) }
     val backgroundAlpha by animateFloatAsState(
         targetValue = if (showSheet) 0.6f else 0f,
-        animationSpec = tween(durationMillis = 400),
+        animationSpec = tween(durationMillis = 250, delayMillis = 120),
         label = "backgroundAlpha"
     )
 
@@ -221,7 +221,7 @@ fun InterceptOverlayContent(
     val closeOverlay: () -> Unit = {
         scope.launch {
             showSheet = false
-            delay(400)
+            delay(300)
             currentOnCloseApp()
         }
     }
@@ -245,7 +245,11 @@ fun InterceptOverlayContent(
         }
     }
 
-    val dragUses = if (shield?.type == FocusType.SHIELD) shield.currentPeriodUses else null
+    val dragUses = if (shield?.type == FocusType.SHIELD) effectivePeriodUses(
+        currentPeriodUses = shield.currentPeriodUses,
+        lastPeriodResetTimestamp = shield.lastPeriodResetTimestamp,
+        refreshPeriodMinutes = shield.refreshPeriodMinutes
+    ) else null
     val dragMaxUses = if (shield?.type == FocusType.SHIELD) shield.maxUsesPerPeriod else null
     val dragEmergency = if (shield?.type == FocusType.SHIELD) shield.emergencyUseCount else null
 
@@ -359,7 +363,10 @@ fun InterceptOverlayContent(
                     onConsumeBonusUse = onConsumeBonusUse,
                     onAllowUse = { minutes, emergency ->
                         showSheet = false
-                        currentOnAllowUse(minutes, emergency)
+                        scope.launch {
+                            delay(300)
+                            currentOnAllowUse(minutes, emergency)
+                        }
                     },
                     onCloseApp = closeOverlay
                 )
@@ -477,7 +484,7 @@ fun ScheduleOverlayContent(
     var showSheet by remember { mutableStateOf(false) }
     val backgroundAlpha by animateFloatAsState(
         targetValue = if (showSheet) 0.6f else 0f,
-        animationSpec = tween(durationMillis = 400),
+        animationSpec = tween(durationMillis = 250, delayMillis = 120),
         label = "backgroundAlpha"
     )
 
@@ -491,7 +498,7 @@ fun ScheduleOverlayContent(
     val closeOverlay: () -> Unit = {
         scope.launch {
             showSheet = false
-            delay(400)
+            delay(300)
             currentOnCloseApp()
         }
     }
@@ -568,7 +575,10 @@ fun ScheduleOverlayContent(
                     isLandscape = isLandscape,
                     onAllowUse = { minutes, emergency ->
                         showSheet = false
-                        currentOnAllowUse(minutes, emergency)
+                        scope.launch {
+                            delay(300)
+                            currentOnAllowUse(minutes, emergency)
+                        }
                     },
                     onCloseApp = closeOverlay
                 )

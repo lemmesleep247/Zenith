@@ -69,7 +69,7 @@ fun BedtimeOverlayContent(
         if (startExitTimer) {
             delay(5000)
             showContent = false
-            delay(400)
+            delay(300)
             onCloseApp()
         }
     }
@@ -112,13 +112,14 @@ fun BedtimeOverlayContent(
             val formattedTime = if (h > 0) "${h}h ${m}m" else "${m}m"
             
             value = Triple(progress, formattedTime, userPreferences.bedtimeEndTime)
-            delay(30000)
+            // Battery: Calendar-only calc, 60s is enough (was 30s).
+            delay(60_000L)
         }
     }
 
     val backgroundAlphaState = animateFloatAsState(
         targetValue = if (showContent) 0.6f else 0f,
-        animationSpec = tween(durationMillis = 400),
+        animationSpec = tween(durationMillis = 250, delayMillis = 120),
         label = "backgroundAlpha"
     )
 
@@ -141,7 +142,7 @@ fun BedtimeOverlayContent(
         onCloseApp = {
             scope.launch {
                 showContent = false
-                delay(400)
+                delay(300)
                 onCloseApp()
             }
         }
@@ -156,7 +157,7 @@ fun BedtimeOverlayContent(
                 onCloseApp = {
                     scope.launch {
                         showContent = false
-                        delay(400)
+                        delay(300)
                         onCloseApp()
                     }
                 },
@@ -173,7 +174,7 @@ fun BedtimeOverlayContent(
                 onCloseApp = {
                     scope.launch {
                         showContent = false
-                        delay(400)
+                        delay(300)
                         onCloseApp()
                     }
                 },

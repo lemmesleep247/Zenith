@@ -64,8 +64,6 @@ class ZenithService : AccessibilityService() {
 
     private var lastKickTime = 0L
     private var lastKickedPackage: String? = null
-    private var dndSetByApp = false
-    private var dndPreviousFilter: Int? = null
 
     private var monitoringJob: kotlinx.coroutines.Job? = null
     private var bypassCheckRunnable: Runnable? = null
@@ -86,14 +84,16 @@ class ZenithService : AccessibilityService() {
         var lastEventTime = 0L
         private var instance: ZenithService? = null
         const val BEDTIME_CHANNEL_ID = "zenith_bedtime_channel"
-        const val WIND_DOWN_NOTIFICATION_ID = 2001
+        const val WIND_DOWN_NOTIFICATION_ID = 2006
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == "com.etrisad.zenith.action.REFRESH_DATA") {
             refreshService()
         }
-        return START_STICKY
+        // Battery: accessibility service is restarted by the system itself.
+        // START_NOT_STICKY avoids an extra resurrection when started via startService().
+        return START_NOT_STICKY
     }
 
     private fun refreshService() {
@@ -349,8 +349,17 @@ class ZenithService : AccessibilityService() {
     private fun startEventDrivenMonitoring() {
         monitoringJob = serviceScope.launch {
             while (true) {
-                delay(2_500L)
-                if (!AppStateHolder.isScreenOn.value) continue
+                // Battery: adaptive interval + screen-off backoff.
+                // Screen-off must sleep, not spin with `continue`.
+                if (!AppStateHolder.isScreenOn.value) {
+                    delay(30_000L)
+                    continue
+                }
+                val cfgDelay = try {
+                    SharedMonitoringState.performanceConfig.a11yActiveDelay
+                } catch (_: Exception) { 2_500L }
+                // Clamp to 2.5s..15s so MAX_RESPONSIVENESS cannot spin faster.
+                delay(cfgDelay.coerceIn(2_500L, 15_000L))
                 try {
                     val realPkg = queryCurrentForegroundApp()
                     if (realPkg != null && realPkg != lastForegroundApp && !InterceptOverlayManager.isSystemUiPackage(realPkg) && !isKeyboardApp(realPkg)) {
@@ -541,6 +550,10 @@ class ZenithService : AccessibilityService() {
     private fun startUrlPolling(browserPackage: String) {
         urlPollJob?.cancel()
         urlPollJob = serviceScope.launch(Dispatchers.IO) {
+            // Battery: cap URL polling to 10 minutes max per browser session.
+            // Previously `while(true)` polled 2x/sec for hours if browser stayed open.
+            val pollStart = System.currentTimeMillis()
+            val maxPollMs = 10 * 60 * 1000L
             try {
                 val firstDomain = websiteUrlTracker.extractFromActiveWindow(browserPackage)
                 if (firstDomain != null) {
@@ -559,8 +572,9 @@ class ZenithService : AccessibilityService() {
                         }
                     }
                 }
-                while (true) {
-                    delay(500)
+                while (System.currentTimeMillis() - pollStart < maxPollMs) {
+                    delay(2000)
+                    if (!AppStateHolder.isScreenOn.value) break
                     val d = websiteUrlTracker.extractFromActiveWindow(browserPackage)
                     if (d != null && d != WebsiteStateHolder.currentWebsiteDomain.value) {
                         withContext(Dispatchers.Main) {
@@ -1072,7 +1086,11 @@ class ZenithService : AccessibilityService() {
                 return
             }
 
-            var shield = currentShieldCache?.takeIf { it.packageName == actualTargetPackage } ?: SharedMonitoringState.allShieldsCache[actualTargetPackage]
+            // Prefer the shared map: handleAllowUse publishes every increment there
+            // synchronously, while currentShieldCache may belong to the other
+            // detector path and lag behind (stale 1/2 vs fresh 2/2 flicker).
+            var shield = SharedMonitoringState.allShieldsCache[actualTargetPackage]
+                ?: currentShieldCache?.takeIf { it.packageName == actualTargetPackage }
 
             if (shield != null && isWebsite && actualTargetPackage.startsWith("zenith-web:")) {
                 val websiteAllowedUntil = allowedApps[actualTargetPackage] ?: 0L
@@ -1507,29 +1525,7 @@ class ZenithService : AccessibilityService() {
     }
 
     private fun updateDndAndWindDown(dnd: Boolean, windDown: Boolean) {
-        if (!notificationManager.isNotificationPolicyAccessGranted) return
-        try {
-            val current = notificationManager.currentInterruptionFilter
-            if (dnd) {
-                if (!dndSetByApp) {
-                    dndPreviousFilter = current
-                    dndSetByApp = true
-                }
-                if (current != NotificationManager.INTERRUPTION_FILTER_PRIORITY) {
-                    notificationManager.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_PRIORITY)
-                }
-            } else if (dndSetByApp) {
-                dndSetByApp = false
-                if (current == NotificationManager.INTERRUPTION_FILTER_PRIORITY) {
-                    notificationManager.setInterruptionFilter(
-                        dndPreviousFilter ?: NotificationManager.INTERRUPTION_FILTER_ALL
-                    )
-                }
-                dndPreviousFilter = null
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+        DndStateManager.applyBedtimeDnd(this, notificationManager, dnd)
     }
 
     private fun checkSchedules(packageName: String): Boolean {

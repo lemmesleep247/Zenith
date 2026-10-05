@@ -46,6 +46,7 @@ class AlarmPlaybackService : Service() {
     private var alarmTime: String = "07:00"
 
     private val serviceScope = CoroutineScope(Dispatchers.Default + Job())
+    private var autoStopJob: Job? = null
 
     inner class LocalBinder : Binder() {
         fun getService(): AlarmPlaybackService = this@AlarmPlaybackService
@@ -74,6 +75,16 @@ class AlarmPlaybackService : Service() {
 
         isAlarmActive = true
         _isPlaying.value = true
+        // Battery: hard auto-stop so looping audio + infinite vibrate + TTS
+        // cannot run forever if overlay is killed without stopPlayback().
+        autoStopJob?.cancel()
+        autoStopJob = serviceScope.launch {
+            delay(PLAYBACK_AUTO_STOP_MS)
+            if (isAlarmActive) {
+                Log.w("AlarmPlayback", "Auto-stopping playback after 10min timeout")
+                stopPlayback()
+            }
+        }
         serviceScope.launch {
             try {
                 val app = applicationContext as ZenithApplication
@@ -143,18 +154,23 @@ class AlarmPlaybackService : Service() {
 
                 Log.d("AlarmPlayback", "playAlarmSound: alarmTime=$alarmTime gradualVolume=$gradualVolume gradualVolumeDuration=${gradualVolumeDuration}s alarmVolume=$alarmVolumeLevel vibrate=$vibrateEnabled ttsTalkAfter=${ttsTalkAfter}s ttsRepeat=$ttsRepeat")
 
-                if (!prefs.alarmSoundEnabled) return@launch
+                val soundOff = !prefs.alarmSoundEnabled || currentAlarm?.soundEnabled == false
+                val ttsEnabled = currentAlarm?.ttsEnabled ?: false
+                val ttsPhrase = currentAlarm?.ttsCustomPhrase
+                val ttsLanguage = currentAlarm?.ttsLanguage
+                if (soundOff) {
+                    withContext(Dispatchers.Main) {
+                        if (vibrateEnabled) startVibration()
+                        if (ttsEnabled) speakAlarmTime(ttsPhrase, ttsLanguage, talkAfterSeconds = ttsTalkAfter, repeatCount = ttsRepeat, intervalSeconds = ttsInterval)
+                    }
+                    return@launch
+                }
 
                 val soundUri = when {
-                    currentAlarm?.soundEnabled == false -> return@launch
                     currentAlarm?.soundUri != null -> currentAlarm.soundUri!!.toUri()
                     prefs.alarmSoundUri != null -> prefs.alarmSoundUri!!.toUri()
                     else -> android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_ALARM)
                 }
-
-                val ttsEnabled = currentAlarm?.ttsEnabled ?: false
-                val ttsPhrase = currentAlarm?.ttsCustomPhrase
-                val ttsLanguage = currentAlarm?.ttsLanguage
 
                 withContext(Dispatchers.Main) {
                     try {
@@ -239,7 +255,9 @@ class AlarmPlaybackService : Service() {
                         tts?.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "alarm_tts")
 
                         var speakCount = 1
-                        val maxSpeaks = if (repeatCount > 0) repeatCount else Int.MAX_VALUE
+                        // Battery: previously Int.MAX_VALUE = infinite TTS loop.
+                        val maxSpeaks = if (repeatCount > 0) repeatCount.coerceAtMost(MAX_TTS_SPEAKS)
+                        else MAX_TTS_SPEAKS
                         val intervalMs = intervalSeconds.coerceAtLeast(1) * 1000L
                         while (isAlarmActive && speakCount < maxSpeaks) {
                             delay(intervalMs)
@@ -339,6 +357,7 @@ class AlarmPlaybackService : Service() {
     fun stopPlayback() {
         isAlarmActive = false
         _isPlaying.value = false
+        autoStopJob?.cancel(); autoStopJob = null
         ttsLoopJob?.cancel(); ttsLoopJob = null
         gradualVolumeJob?.cancel(); gradualVolumeJob = null
         mediaPlayer?.stop(); mediaPlayer?.release(); mediaPlayer = null
@@ -351,6 +370,7 @@ class AlarmPlaybackService : Service() {
     override fun onDestroy() {
         isAlarmActive = false
         _isPlaying.value = false
+        autoStopJob?.cancel()
         ttsLoopJob?.cancel()
         gradualVolumeJob?.cancel()
         mediaPlayer?.stop(); mediaPlayer?.release(); mediaPlayer = null
@@ -362,6 +382,8 @@ class AlarmPlaybackService : Service() {
 
     companion object {
         const val EXTRA_ALARM_TIME = "extra_alarm_time"
+        const val PLAYBACK_AUTO_STOP_MS = 10 * 60 * 1000L
+        const val MAX_TTS_SPEAKS = 60
         private const val NOTIFICATION_ID = 2010
 
         private val _isPlaying = MutableStateFlow(false)

@@ -73,7 +73,7 @@ fun GoalOverlay(
     var showContent by remember { mutableStateOf(false) }
     val backgroundAlpha by animateFloatAsState(
         targetValue = if (showContent) 0.6f else 0f,
-        animationSpec = tween(durationMillis = 400),
+        animationSpec = tween(durationMillis = 250, delayMillis = 120),
         label = "backgroundAlpha"
     )
 
@@ -99,7 +99,10 @@ fun GoalOverlay(
         val dayStartMinute = com.etrisad.zenith.service.SharedMonitoringState.cachedDayStartMinute
         var lastOfDay = 0L
         var cachedOfDay = 0L
+        val pollStart = System.currentTimeMillis()
         while (true) {
+            // Battery: cap overlay polling to 10 min max per overlay instance.
+            if (System.currentTimeMillis() - pollStart > 10 * 60 * 1000L) break
             val now = System.currentTimeMillis()
             if (now - lastOfDay > 60000) {
                 cachedOfDay = DateTimeUtils.getDayStartTime(now, dayStartHour, dayStartMinute)
@@ -147,7 +150,7 @@ fun GoalOverlay(
         onCloseApp = {
             scope.launch {
                 showContent = false
-                delay(400)
+                delay(300)
                 currentOnGoalDismiss()
             }
         }
@@ -164,7 +167,7 @@ fun GoalOverlay(
                 onGoalDismiss = {
                     scope.launch {
                         showContent = false
-                        delay(400)
+                        delay(300)
                         currentOnGoalDismiss()
                     }
                 },
@@ -182,7 +185,7 @@ fun GoalOverlay(
                 onGoalDismiss = {
                     scope.launch {
                         showContent = false
-                        delay(400)
+                        delay(300)
                         currentOnGoalDismiss()
                     }
                 },

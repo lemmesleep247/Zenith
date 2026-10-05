@@ -103,7 +103,7 @@ fun ShieldOverlay(
 
     val backgroundAlpha by animateFloatAsState(
         targetValue = if (showContent) 0.6f else 0f,
-        animationSpec = tween(durationMillis = 400),
+        animationSpec = tween(durationMillis = 250, delayMillis = 120),
         label = "backgroundAlpha"
     )
 
@@ -114,7 +114,11 @@ fun ShieldOverlay(
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
-    val dragUses = if (shield?.type == FocusType.SHIELD) shield.currentPeriodUses else null
+    val dragUses = if (shield?.type == FocusType.SHIELD) effectivePeriodUses(
+        currentPeriodUses = shield.currentPeriodUses,
+        lastPeriodResetTimestamp = shield.lastPeriodResetTimestamp,
+        refreshPeriodMinutes = shield.refreshPeriodMinutes
+    ) else null
     val dragMaxUses = if (shield?.type == FocusType.SHIELD) shield.maxUsesPerPeriod else null
     val dragEmergency = if (shield?.type == FocusType.SHIELD) shield.emergencyUseCount else null
 
@@ -163,7 +167,7 @@ fun ShieldOverlay(
         onCloseApp = {
             scope.launch {
                 showContent = false
-                delay(400)
+                delay(300)
                 currentOnCloseApp()
             }
         }
@@ -188,14 +192,14 @@ fun ShieldOverlay(
             onAllowUse = { minutes, emergency ->
                 scope.launch {
                     showContent = false
-                    delay(400)
+                    delay(300)
                     currentOnAllowUse(minutes, emergency)
                 }
             },
             onCloseApp = {
                 scope.launch {
                     showContent = false
-                    delay(400)
+                    delay(300)
                     currentOnCloseApp()
                 }
             }
@@ -247,7 +251,10 @@ fun ShieldOverlaySheetContent(
         val dayStartMinute = com.etrisad.zenith.service.SharedMonitoringState.cachedDayStartMinute
         var lastOfDay = 0L
         var cachedOfDay = 0L
+        val pollStart = System.currentTimeMillis()
         while (true) {
+            // Battery: cap overlay polling to 10 min max per overlay instance.
+            if (System.currentTimeMillis() - pollStart > 10 * 60 * 1000L) break
             val now = System.currentTimeMillis()
             if (now - lastOfDay > 60000) {
                 cachedOfDay = DateTimeUtils.getDayStartTime(now, dayStartHour, dayStartMinute)
@@ -324,10 +331,23 @@ fun ShieldOverlaySheetContent(
         currentShield != null && (System.currentTimeMillis() - currentShield.lastPeriodResetTimestamp > currentShield.refreshPeriodMinutes * 60 * 1000L)
     }
 
-    val currentUses = remember(currentShield, isPeriodExpired) {
-        if (isPeriodExpired) 0 else (currentShield?.currentPeriodUses ?: 0)
+    // Agree with the drag-handle pill: live Room Flow can lag behind a
+    // just-committed Allow (same overlay session). Within one period DB uses
+    // only move up, so take the max; on period change trust live.
+    val currentUses = remember(currentShield, isPeriodExpired, shield) {
+        val liveUses = if (isPeriodExpired) 0 else (currentShield?.currentPeriodUses ?: 0)
+        val snapUses = shield?.let {
+            effectivePeriodUses(it.currentPeriodUses, it.lastPeriodResetTimestamp, it.refreshPeriodMinutes)
+        } ?: 0
+        if (currentShield != null && shield != null &&
+            currentShield.lastPeriodResetTimestamp == shield.lastPeriodResetTimestamp
+        ) {
+            maxOf(liveUses, snapUses)
+        } else {
+            liveUses
+        }
     }
-    val maxUses = currentShield?.maxUsesPerPeriod ?: 5
+    val maxUses = currentShield?.maxUsesPerPeriod ?: shield?.maxUsesPerPeriod ?: 5
     val isUsesExceeded = remember(currentUses, maxUses, isIncentiveBlocked) { isIncentiveBlocked || currentUses >= maxUses }
     val isTimeLimitReached = remember(currentTotalUsageToday, currentShield) {
         currentShield != null && currentShield.timeLimitMinutes > 0 && currentTotalUsageToday >= (currentShield.timeLimitMinutes * 60 * 1000L)
@@ -785,7 +805,7 @@ fun LandscapeInterceptLayout(
                     ) {
                         ZenithButton(
                             onClick = { },
-                            text = "$currentUses/$maxUses",
+                            text = "${(maxUses - currentUses).coerceAtLeast(0)}/$maxUses",
                             icon = Icons.Outlined.Timer,
                             type = ZenithButtonType.Tonal,
                             size = ZenithButtonSize.Small,

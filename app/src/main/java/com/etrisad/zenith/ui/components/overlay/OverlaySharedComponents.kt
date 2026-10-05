@@ -69,6 +69,19 @@ val PREDEFINED_PALETTES = listOf(
     OverlayColorPalette("mint", Color(0xFF006B5D), "Mint")
 )
 
+// Single source of truth untuk uses pill: 0 jika periode sudah expired,
+// selain itu currentPeriodUses mentah. Dipakai semua overlay agar sama.
+fun effectivePeriodUses(
+    currentPeriodUses: Int,
+    lastPeriodResetTimestamp: Long,
+    refreshPeriodMinutes: Int,
+    nowMillis: Long = System.currentTimeMillis()
+): Int {
+    if (refreshPeriodMinutes <= 0) return currentPeriodUses
+    val expired = nowMillis - lastPeriodResetTimestamp > refreshPeriodMinutes * 60 * 1000L
+    return if (expired) 0 else currentPeriodUses
+}
+
 fun generateDynamicColorScheme(seed: Color, isDark: Boolean, currentScheme: ColorScheme, isForPreview: Boolean = false): ColorScheme {
     val hsv = FloatArray(3)
     android.graphics.Color.colorToHSV(seed.toArgb(), hsv)
@@ -303,68 +316,24 @@ fun OverlayDragHandleWithIndicators(
     ) {
         Box(modifier = Modifier.weight(1f)) {
             val hasUses = currentUses != null && maxUses != null
-            if (isIncentiveLocked && hasUses) {
-                var showingUses by remember { mutableStateOf(true) }
-                LaunchedEffect(Unit) {
-                    while (true) {
-                        delay(3000)
-                        showingUses = !showingUses
-                    }
-                }
-                Crossfade(targetState = showingUses, label = "dragHandle") { showUses ->
-                    if (showUses) {
-                        ZenithButton(
-                            onClick = { },
-                            text = "$currentUses/$maxUses",
-                            icon = Icons.Outlined.Timer,
-                            type = ZenithButtonType.Tonal,
-                            size = ZenithButtonSize.Small,
-                            modifier = Modifier.padding(start = 16.dp).widthIn(max = 110.dp),
-                            isDisableWeight = true,
-                            isDisableExpand = true,
-                            backgroundProgressProvider = { ((maxUses - currentUses).toFloat() / maxUses.toFloat()).coerceIn(0f, 1f) },
-                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                            contentColor = MaterialTheme.colorScheme.primary
-                        )
-                    } else {
-                        val tier = incentiveTier ?: IncentiveTier.LOCKED
-                        val displayText = when {
-                            tier == IncentiveTier.LOCKED -> "Locked"
-                            tier.bonusUses < Int.MAX_VALUE -> "$bonusUsesLeft left"
-                            else -> "Unlocked"
-                        }
-                        val icon = when {
-                            tier == IncentiveTier.LOCKED -> Icons.Outlined.Lock
-                            tier == IncentiveTier.LIMITED -> Icons.Outlined.Lock
-                            tier == IncentiveTier.MODERATE -> Icons.Outlined.Timer
-                            else -> Icons.Outlined.Bolt
-                        }
-                        val container = when {
-                            tier == IncentiveTier.LOCKED -> MaterialTheme.colorScheme.errorContainer
-                            tier.bonusUses < Int.MAX_VALUE && bonusUsesLeft <= 0 -> MaterialTheme.colorScheme.errorContainer
-                            tier.bonusUses < Int.MAX_VALUE -> MaterialTheme.colorScheme.tertiaryContainer
-                            else -> MaterialTheme.colorScheme.surfaceContainerHigh
-                        }
-                        val content = when {
-                            tier == IncentiveTier.LOCKED -> MaterialTheme.colorScheme.error
-                            tier.bonusUses < Int.MAX_VALUE && bonusUsesLeft <= 0 -> MaterialTheme.colorScheme.error
-                            tier.bonusUses < Int.MAX_VALUE -> MaterialTheme.colorScheme.onTertiaryContainer
-                            else -> MaterialTheme.colorScheme.primary
-                        }
-                        ZenithButton(
-                            onClick = { },
-                            text = displayText,
-                            icon = icon,
-                            type = ZenithButtonType.Tonal,
-                            size = ZenithButtonSize.Small,
-                            modifier = Modifier.padding(start = 16.dp).widthIn(max = 110.dp),
-                            isDisableWeight = true,
-                            isDisableExpand = true,
-                            containerColor = container,
-                            contentColor = content
-                        )
-                    }
-                }
+            // Standar tunggal: pill tampil sebagai SISA/MAX (menurun),
+            // selaras dengan fill progress ((max - current) / max).
+            // Bonus incentive tetap ditampilkan di sheet content, bukan bergantian di drag handle
+            // agar tidak flicker antara "bertambah" dan "berkurang".
+            if (hasUses) {
+                ZenithButton(
+                    onClick = { },
+                    text = "${(maxUses - currentUses).coerceAtLeast(0)}/$maxUses",
+                    icon = Icons.Outlined.Timer,
+                    type = ZenithButtonType.Tonal,
+                    size = ZenithButtonSize.Small,
+                    modifier = Modifier.padding(start = 16.dp).widthIn(max = 110.dp),
+                    isDisableWeight = true,
+                    isDisableExpand = true,
+                    backgroundProgressProvider = { ((maxUses - currentUses).toFloat() / maxUses.toFloat()).coerceIn(0f, 1f) },
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    contentColor = MaterialTheme.colorScheme.primary
+                )
             } else if (isIncentiveLocked) {
                 val tier = incentiveTier ?: IncentiveTier.LOCKED
                 val displayText = when {
@@ -401,20 +370,6 @@ fun OverlayDragHandleWithIndicators(
                     isDisableExpand = true,
                     containerColor = container,
                     contentColor = content
-                )
-            } else if (hasUses) {
-                ZenithButton(
-                    onClick = { },
-                    text = "$currentUses/$maxUses",
-                    icon = Icons.Outlined.Timer,
-                    type = ZenithButtonType.Tonal,
-                    size = ZenithButtonSize.Small,
-                    modifier = Modifier.padding(start = 16.dp).widthIn(max = 110.dp),
-                    isDisableWeight = true,
-                    isDisableExpand = true,
-                    backgroundProgressProvider = { ((maxUses - currentUses).toFloat() / maxUses.toFloat()).coerceIn(0f, 1f) },
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    contentColor = MaterialTheme.colorScheme.primary
                 )
             }
         }
@@ -786,13 +741,16 @@ fun CurrentEventPill(
     val eventProgress = remember { mutableFloatStateOf(0f) }
 
     LaunchedEffect(currentEvent) {
+        // Battery: was 100ms (10Hz) for a slow calendar progress bar. 1s is enough.
         while (true) {
             val now = System.currentTimeMillis()
             val duration = currentEvent.eventEndMillis - currentEvent.eventStartMillis
             eventProgress.floatValue = if (duration > 0) {
                 ((now - currentEvent.eventStartMillis).toFloat() / duration).coerceIn(0f, 1f)
             } else 0f
-            delay(100)
+            // Auto-stop when event ends to avoid infinite ticker.
+            if (now >= currentEvent.eventEndMillis) break
+            delay(1000)
         }
     }
 

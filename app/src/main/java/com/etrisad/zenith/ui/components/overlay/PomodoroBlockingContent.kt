@@ -76,7 +76,7 @@ fun PomodoroPuzzleContent(
 
     val backgroundAlpha by animateFloatAsState(
         targetValue = if (showContent) 0.6f else 0f,
-        animationSpec = tween(durationMillis = 400),
+        animationSpec = tween(durationMillis = 250, delayMillis = 120),
         label = "backgroundAlpha"
     )
 
@@ -90,8 +90,13 @@ fun PomodoroPuzzleContent(
     val currentOnGoalDismiss by rememberUpdatedState(onGoalDismiss)
     val currentOnComplete by rememberUpdatedState(onComplete)
     val currentOnCloseApp by rememberUpdatedState(onCloseApp)
+    val scope = rememberCoroutineScope()
 
-    val dragUses = if (shield?.type == FocusType.SHIELD) shield.currentPeriodUses else null
+    val dragUses = if (shield?.type == FocusType.SHIELD) effectivePeriodUses(
+        currentPeriodUses = shield.currentPeriodUses,
+        lastPeriodResetTimestamp = shield.lastPeriodResetTimestamp,
+        refreshPeriodMinutes = shield.refreshPeriodMinutes
+    ) else null
     val dragMaxUses = if (shield?.type == FocusType.SHIELD) shield.maxUsesPerPeriod else null
     val dragEmergency = if (shield?.type == FocusType.SHIELD) shield.emergencyUseCount else null
 
@@ -107,7 +112,10 @@ fun PomodoroPuzzleContent(
         dragHandleEmergencyCount = dragEmergency,
         onCloseApp = {
             showContent = false
-            currentOnCloseApp()
+            scope.launch {
+                delay(300)
+                currentOnCloseApp()
+            }
         }
     ) { key ->
         if (key == "puzzle") {
@@ -117,7 +125,10 @@ fun PomodoroPuzzleContent(
                 onComplete = { showingAfterContent = true },
                 onCloseApp = {
                     showContent = false
-                    currentOnCloseApp()
+                    scope.launch {
+                        delay(300)
+                        currentOnCloseApp()
+                    }
                 }
             )
         } else {
@@ -132,11 +143,17 @@ fun PomodoroPuzzleContent(
                         userPreferences = userPreferences,
                         onAllowUse = { minutes ->
                             showContent = false
-                            currentOnAllowUse(minutes, false)
+                            scope.launch {
+                                delay(300)
+                                currentOnAllowUse(minutes, false)
+                            }
                         },
                         onCloseApp = {
                             showContent = false
-                            currentOnCloseApp()
+                            scope.launch {
+                                delay(300)
+                                currentOnCloseApp()
+                            }
                         }
                     )
                 }
@@ -150,26 +167,38 @@ fun PomodoroPuzzleContent(
                         userPreferences = userPreferences,
                         onGoalDismiss = {
                             showContent = false
-                            currentOnGoalDismiss()
+                            scope.launch {
+                                delay(300)
+                                currentOnGoalDismiss()
+                            }
                         },
                         onCloseApp = {
                             showContent = false
-                            currentOnCloseApp()
+                            scope.launch {
+                                delay(300)
+                                currentOnCloseApp()
+                            }
                         }
                     )
                 }
                 PomodoroAfterType.BREAK_STARTED -> {
-                    BreakStartedContent {
-                        showContent = false
+                BreakStartedContent {
+                    showContent = false
+                    scope.launch {
+                        delay(300)
                         currentOnComplete()
                     }
+                }
                 }
                 PomodoroAfterType.BLOCKED -> {
                     BlockedAfterContent(
                         appName = appName,
                         onCloseApp = {
                             showContent = false
-                            currentOnCloseApp()
+                            scope.launch {
+                                delay(300)
+                                currentOnCloseApp()
+                            }
                         }
                     )
                 }
@@ -506,7 +535,7 @@ private fun BlockedAfterContent(appName: String, onCloseApp: () -> Unit) {
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            "$appName is blocked during your Deep Focus session.",
+            "$appName is blocked during your Pomodoro session.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 16.dp)
