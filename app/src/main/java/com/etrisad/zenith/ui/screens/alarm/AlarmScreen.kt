@@ -55,7 +55,6 @@ fun AlarmScreen(
 ) {
     val scope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
-    // Alarm-only slice: alarm/master writes recompose, unrelated prefs don't.
     val prefs by preferencesRepository.alarmPrefsFlow.collectAsState(initial = UserPreferencesRepository.AlarmPrefs())
 
     var sortType by remember { mutableStateOf(AlarmSortType.TIME) }
@@ -133,10 +132,6 @@ fun AlarmScreen(
 
     fun deleteSelected() {
         scope.launch {
-            // Cancel PendingIntent + notification per alarm BEFORE removing from repo.
-            // Previously id-specific exact alarms were not swept (cancel-all only swept
-            // legacy) so deleted alarms could still fire (ghost firing)
-            // and stale reminder notifications would pile up.
             val targets = alarmList.filter { it.id in selectedAlarmIds }
             targets.forEach { target ->
                 try {
@@ -147,7 +142,7 @@ fun AlarmScreen(
                 preferencesRepository.deleteAlarm(id)
             }
             exitSelectionMode()
-            scope.launch(Dispatchers.IO) {
+            withContext(Dispatchers.IO) {
                 rescheduleAlarms(context, preferencesRepository, prefs.alarmMasterEnabled)
             }
         }
@@ -180,7 +175,7 @@ fun AlarmScreen(
                 created.add(copy)
             }
             exitSelectionMode()
-            scope.launch(Dispatchers.IO) {
+            withContext(Dispatchers.IO) {
                 rescheduleAlarms(context, preferencesRepository, prefs.alarmMasterEnabled)
             }
         }
@@ -358,7 +353,7 @@ fun AlarmScreen(
                                     } else {
                                         scope.launch {
                                             preferencesRepository.updateAlarm(alarm.copy(enabled = enabled))
-                                            scope.launch(Dispatchers.IO) {
+                                            withContext(Dispatchers.IO) {
                                                 rescheduleAlarms(context, preferencesRepository, prefs.alarmMasterEnabled)
                                             }
                                         }
@@ -530,7 +525,7 @@ fun AlarmScreen(
                             enabled = if (timeChanged || daysChanged) true else currentEditing.enabled
                         )
                     )
-                    scope.launch(Dispatchers.IO) {
+                    withContext(Dispatchers.IO) {
                         rescheduleAlarms(context, preferencesRepository, prefs.alarmMasterEnabled)
                     }
                 },
@@ -602,7 +597,7 @@ fun AlarmScreen(
                             dismissTaskTypeNames = dismissTaskTypeNames
                         )
                     )
-                    scope.launch(Dispatchers.IO) {
+                    withContext(Dispatchers.IO) {
                         rescheduleAlarms(context, preferencesRepository, prefs.alarmMasterEnabled)
                     }
                     newAlarm = null
@@ -636,7 +631,7 @@ fun AlarmScreen(
                                 AlarmBroadcastReceiver.cancelAlarm(context, target.timeString, target.id)
                             } catch (_: Exception) { }
                             preferencesRepository.deleteAlarm(target.id)
-                            scope.launch(Dispatchers.IO) {
+                            withContext(Dispatchers.IO) {
                                 rescheduleAlarms(context, preferencesRepository, prefs.alarmMasterEnabled)
                             }
                         }
@@ -1035,8 +1030,6 @@ private suspend fun rescheduleAlarms(
     for (alarm in alarms) {
         AlarmBroadcastReceiver.cancelAlarm(context, alarm.timeString, alarm.id)
     }
-    // Also sweep stale notifications (reminder/complete/firing) on every reschedule
-    // so the shade doesn't pile up after an alarm is turned off/edited.
     try {
         AlarmBroadcastReceiver.cancelAllAlarmNotifications(context)
     } catch (_: Exception) { }
@@ -1044,7 +1037,9 @@ private suspend fun rescheduleAlarms(
     if (masterEnabled) {
         val enabledAlarms = alarms.filter { it.enabled }
         for (alarm in enabledAlarms) {
-            AlarmBroadcastReceiver.scheduleAlarm(context, alarm.timeString, alarm.days, alarm.id)
+            try {
+                AlarmBroadcastReceiver.scheduleAlarm(context, alarm.timeString, alarm.days, alarm.id)
+            } catch (_: Exception) { }
         }
     }
 }

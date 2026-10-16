@@ -33,6 +33,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -116,7 +117,13 @@ class NfcScanActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
                 val success = successId.value
                 val kickP = kickProgress.value
                 val supported = remember { isNfcSupported(this@NfcScanActivity) }
-                val enabled = remember(scanned, error, success) { isNfcEnabled(this@NfcScanActivity) }
+                // Re-check on window-focus change: returning from NFC Settings
+                // (which only triggers onResume, not recomposition) refreshes
+                // the stale "turned off" state.
+                val windowFocused = LocalWindowInfo.current.isWindowFocused
+                val enabled = remember(scanned, error, success, windowFocused) {
+                    isNfcEnabled(this@NfcScanActivity)
+                }
 
                 LaunchedEffect(success) {
                     if (success != null) {
@@ -301,10 +308,11 @@ class NfcScanActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
         val normalized = normalizeNfcTagId(id)
         if (normalized.isEmpty()) return
         runOnUiThread {
-            // Any tag tap counts as activity, restart the kick timer.
             restartKickTimer()
             lastScannedId.value = normalized
-            val matches = acceptAny || expectedIds.isEmpty() || normalized in expectedIds
+            // Fail closed: an empty expected list without acceptAny is a
+            // misconfiguration and must reject, never accept any tag.
+            val matches = acceptAny || (expectedIds.isNotEmpty() && normalized in expectedIds)
             if (matches) {
                 lastError.value = null
                 successId.value = normalized

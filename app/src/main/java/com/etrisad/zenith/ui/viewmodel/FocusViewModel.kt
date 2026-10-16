@@ -226,7 +226,6 @@ class FocusViewModel(
         viewModelScope.launch {
             while (true) {
                 if (!isActive) {
-                    // Battery: inactive must sleep 60s, not 5s.
                     delay(60_000L)
                     continue
                 }
@@ -448,7 +447,10 @@ class FocusViewModel(
                 selectedAppForFocus = app,
                 selectedFocusType = type,
                 isSettingsSheetOpen = true,
-                selectedAppUsageToday = 0L,
+                // Same app re-opened: keep the last known value until the
+                // refresh lands instead of flashing 0.
+                selectedAppUsageToday =
+                    if (it.selectedAppForFocus?.packageName == app.packageName) it.selectedAppUsageToday else 0L,
                 isSchedulePickerOpen = false,
                 isScheduleSettingsOpen = false
             )
@@ -461,7 +463,10 @@ class FocusViewModel(
             } catch (_: Exception) {
                 0L
             }
-            _uiState.update { it.copy(selectedAppUsageToday = usage) }
+            // Stale guard: don't overwrite a newer selection's value.
+            if (_uiState.value.selectedAppForFocus?.packageName == app.packageName) {
+                _uiState.update { it.copy(selectedAppUsageToday = usage) }
+            }
         }
     }
 
@@ -695,7 +700,8 @@ class FocusViewModel(
                 selectedAppForFocus = appInfo,
                 selectedFocusType = shield.type,
                 isSettingsSheetOpen = true,
-                selectedAppUsageToday = 0L
+                selectedAppUsageToday =
+                    if (it.selectedAppForFocus?.packageName == shield.packageName) it.selectedAppUsageToday else 0L
             )
         }
         viewModelScope.launch {
@@ -706,7 +712,9 @@ class FocusViewModel(
             } catch (_: Exception) {
                 0L
             }
-            _uiState.update { it.copy(selectedAppUsageToday = usage) }
+            if (_uiState.value.selectedAppForFocus?.packageName == shield.packageName) {
+                _uiState.update { it.copy(selectedAppUsageToday = usage) }
+            }
         }
     }
 

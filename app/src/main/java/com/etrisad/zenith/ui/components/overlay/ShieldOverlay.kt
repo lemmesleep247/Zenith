@@ -17,6 +17,7 @@ import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.Lightbulb
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -253,7 +254,6 @@ fun ShieldOverlaySheetContent(
         var cachedOfDay = 0L
         val pollStart = System.currentTimeMillis()
         while (true) {
-            // Battery: cap overlay polling to 10 min max per overlay instance.
             if (System.currentTimeMillis() - pollStart > 10 * 60 * 1000L) break
             val now = System.currentTimeMillis()
             if (now - lastOfDay > 60000) {
@@ -330,10 +330,6 @@ fun ShieldOverlaySheetContent(
     val isPeriodExpired = remember(currentShield) {
         currentShield != null && (System.currentTimeMillis() - currentShield.lastPeriodResetTimestamp > currentShield.refreshPeriodMinutes * 60 * 1000L)
     }
-
-    // Agree with the drag-handle pill: live Room Flow can lag behind a
-    // just-committed Allow (same overlay session). Within one period DB uses
-    // only move up, so take the max; on period change trust live.
     val currentUses = remember(currentShield, isPeriodExpired, shield) {
         val liveUses = if (isPeriodExpired) 0 else (currentShield?.currentPeriodUses ?: 0)
         val snapUses = shield?.let {
@@ -803,19 +799,46 @@ fun LandscapeInterceptLayout(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        ZenithButton(
-                            onClick = { },
-                            text = "${(maxUses - currentUses).coerceAtLeast(0)}/$maxUses",
-                            icon = Icons.Outlined.Timer,
-                            type = ZenithButtonType.Tonal,
-                            size = ZenithButtonSize.Small,
-                            isDisableWeight = true,
-                            isDisableExpand = true,
-                            backgroundProgressProvider = { ((maxUses - currentUses).toFloat() / maxUses.toFloat()).coerceIn(0f, 1f) },
-                            modifier = Modifier.widthIn(max = 110.dp),
-                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                            contentColor = MaterialTheme.colorScheme.primary
-                        )
+                        if (isIncentiveBlocked) {
+                            val tier = incentiveTier ?: IncentiveTier.LOCKED
+                            val displayText = when {
+                                tier == IncentiveTier.LOCKED -> "Locked"
+                                tier.bonusUses < Int.MAX_VALUE -> "$bonusUsesLeft left"
+                                else -> "Unlocked"
+                            }
+                            val icon = when {
+                                tier == IncentiveTier.LOCKED -> Icons.Outlined.Lock
+                                tier == IncentiveTier.LIMITED -> Icons.Outlined.Lock
+                                tier == IncentiveTier.MODERATE -> Icons.Outlined.Timer
+                                else -> Icons.Outlined.Bolt
+                            }
+                            ZenithButton(
+                                onClick = { },
+                                text = displayText,
+                                icon = icon,
+                                type = ZenithButtonType.Tonal,
+                                size = ZenithButtonSize.Small,
+                                isDisableWeight = true,
+                                isDisableExpand = true,
+                                modifier = Modifier.widthIn(max = 110.dp),
+                                containerColor = MaterialTheme.colorScheme.errorContainer,
+                                contentColor = MaterialTheme.colorScheme.error
+                            )
+                        } else {
+                            ZenithButton(
+                                onClick = { },
+                                text = "${(maxUses - currentUses).coerceAtLeast(0)}/$maxUses",
+                                icon = Icons.Outlined.Timer,
+                                type = ZenithButtonType.Tonal,
+                                size = ZenithButtonSize.Small,
+                                isDisableWeight = true,
+                                isDisableExpand = true,
+                                backgroundProgressProvider = { ((maxUses - currentUses).toFloat() / maxUses.toFloat()).coerceIn(0f, 1f) },
+                                modifier = Modifier.widthIn(max = 110.dp),
+                                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                contentColor = MaterialTheme.colorScheme.primary
+                            )
+                        }
                         ZenithButton(
                             onClick = { },
                             text = "${shield.emergencyUseCount}",

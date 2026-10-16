@@ -69,10 +69,6 @@ fun InterceptBottomSheet(
 
         when {
             paletteId == "dynamic" -> {
-                // Samakan dengan palette lain agar hierarki kontras flat berlaku juga
-                // untuk warna sistem (Material You). Seed = primary sistem sehingga
-                // ungu sistem tidak lagi menyatu (sheet 0.95 vs tombol 0.87 light,
-                // sheet 0.17 vs tombol 0.33 dark).
                 generateDynamicColorScheme(currentScheme.primary, isDark, currentScheme, isForPreview = false)
             }
             paletteId == "custom" -> {
@@ -89,6 +85,11 @@ fun InterceptBottomSheet(
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
     val dragOffset = remember { Animatable(0f) }
+    // Reset after a close-fling (which leaves a large value behind) so the
+    // next open doesn't combine a stale translationY with the enter slide.
+    LaunchedEffect(visible) {
+        if (visible) dragOffset.snapTo(0f)
+    }
     val closeThresholdPx = with(density) { 120.dp.toPx() }
     val currentOnCloseApp by rememberUpdatedState(onCloseApp)
 

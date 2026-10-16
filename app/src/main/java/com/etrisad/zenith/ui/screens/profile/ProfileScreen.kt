@@ -684,8 +684,6 @@ private fun ProfileIdentityCard(
                             contentDescription = null,
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxSize(),
-                            // Transparent on failure so the default tint
-                            // behind it stays visible instead of a blank gap.
                             loading = { },
                             error = { }
                         )
@@ -854,9 +852,6 @@ private fun ProfileIdentityCard(
                     .background(MaterialTheme.colorScheme.tertiaryContainer),
                 contentAlignment = Alignment.Center
             ) {
-                // No loading placeholder: blank tint fades straight into
-                // the photo. The icon only shows when there is no photo
-                // or the file fails to load.
                 var imgError by remember(avatarUri) { mutableStateOf(false) }
                 if (avatarUri.isEmpty() || imgError) {
                     DefaultAvatarIcon()
@@ -1292,8 +1287,6 @@ private fun AchievementSquareCard(
                 )
             }
             Spacer(modifier = Modifier.height(4.dp))
-            // The tier name IS the display name: it keeps changing with the
-            // level. Locked badges fall back to the base title.
             Text(
                 text = if (earned) tierDisplayName(achievement.def, achievement.earnedLevel)
                 else achievement.def.title,
@@ -1428,7 +1421,6 @@ fun AchievementDetailSheet(
             )
             Spacer(modifier = Modifier.height(8.dp))
             val level = achievement.earnedLevel
-            // Positions work past any list length (generated tiers included).
             val beforeLevel = level - 1
             val nextLevel = level + 1
             Row(
@@ -1479,8 +1471,6 @@ fun AchievementDetailSheet(
                 color = MaterialTheme.colorScheme.primary
             )
             Spacer(modifier = Modifier.height(8.dp))
-            // Keys are tier positions (legacy roman values were migrated);
-            // unknown keys (def edited) are dropped.
             val history = achievement.unlockedDates.entries.mapNotNull { (key, date) ->
                 val lvl = levelForHistoryKey(achievement.def, key)
                 if (lvl < 1) null else lvl to date
@@ -1649,9 +1639,11 @@ fun AchievementProgressBanner(
     onOpen: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var started by remember { mutableStateOf(false) }
-    var starsShown by remember { mutableStateOf(!isFull) }
-    LaunchedEffect(Unit) {
+    // Keyed by banner identity: inside AnimatedContent reuse, Unit would
+    // leave a stale animation running (or never restart) for the next banner.
+    var started by remember(title, beforeFraction, afterFraction) { mutableStateOf(false) }
+    var starsShown by remember(title, afterFraction, isFull) { mutableStateOf(!isFull) }
+    LaunchedEffect(title, beforeFraction, afterFraction) {
         delay(900)
         started = true
         if (isFull) {

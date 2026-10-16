@@ -307,9 +307,6 @@ fun SnapshotInsightCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            // Quick action: open the shield sheet for the app that dominates
-            // this week's snapshot. Only on warnings (intense SHIELD or an
-            // unshielded attention-grabber), never on GOAL praise or empty data.
             val showAddShield = onAddShield != null &&
                 dominantApp != null && dominantType != FocusType.GOAL
             AnimatedVisibility(visible = showAddShield) {
@@ -613,7 +610,7 @@ fun SnapshotCard(
                                             modifier = Modifier.size(28.dp).clip(CircleShape),
                                             contentScale = ContentScale.Crop
                                         )
-                                    } else if (app.packageName.isNotEmpty()) {
+                                    } else if (app.appName.isNotEmpty()) {
                                         Box(
                                             modifier = Modifier
                                                 .size(28.dp)

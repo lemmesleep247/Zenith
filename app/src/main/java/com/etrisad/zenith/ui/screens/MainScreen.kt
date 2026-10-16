@@ -693,7 +693,8 @@ fun MainScreen(
                                                                             headerBorder, 2.dp,
                                                                             SolidColor(
                                                                                 MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
-                                                                            )
+                                                                            ),
+                                                                            animate = false
                                                                         )
                                                                         .padding(2.dp)
                                                                 } else {
@@ -805,7 +806,6 @@ fun MainScreen(
                                                                 com.etrisad.zenith.receiver.AlarmBroadcastReceiver.cancelAlarm(context, alarm.timeString, alarm.id)
                                                             }
                                                             com.etrisad.zenith.receiver.AlarmBroadcastReceiver.cancelAlarm(context)
-                                                            // Master OFF = tidak ada auto-start lagi -> notif wajib hilang.
                                                             try {
                                                                 com.etrisad.zenith.receiver.AlarmBroadcastReceiver.cancelAllAlarmNotifications(context)
                                                             } catch (_: Exception) { }

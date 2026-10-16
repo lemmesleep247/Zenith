@@ -16,6 +16,7 @@ import com.etrisad.zenith.R
 import com.etrisad.zenith.ZenithApplication
 import com.etrisad.zenith.data.model.AlarmItem
 import com.etrisad.zenith.service.AlarmOverlayActivity
+import com.etrisad.zenith.util.AlarmChainHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -31,7 +32,6 @@ class AlarmBroadcastReceiver : BroadcastReceiver() {
             ACTION_FIRE_ALARM -> {
                 val alarmTime = intent.getStringExtra(AlarmOverlayActivity.EXTRA_ALARM_TIME) ?: "07:00"
                 val alarmId = intent.getLongExtra(EXTRA_ALARM_ID, 0L)
-                // Alarm berbunyi lagi -> reminder "akan bunyi lagi" sudah basi, notif complete lama juga basi.
                 cancelSmartWakeReminder(context)
                 cancelAutoRepeatComplete(context)
                 cancelMissedAlarmNotification(context)
@@ -48,17 +48,12 @@ class AlarmBroadcastReceiver : BroadcastReceiver() {
                 cancelAutoRepeatComplete(context)
                 cancelMissedAlarmNotification(context)
                 recordAlarmFire(context, alarmTime)
-                // Snooze adalah one-shot: JANGAN rangkai auto-repeat di belakangnya.
-                // Dulu snooze memakai action yang sama sehingga tiap snooze memicu rantai
-                // auto-repeat tak berujung (spam + bunyi ganda).
                 if (!isSnooze) {
                     scheduleReTrigger(context, alarmTime, attempt, alarmId)
                 }
                 showAlarm(context, alarmTime, intent)
             }
             ACTION_CHECK_USAGE -> {
-                // DataStore/UsageStats reads must not block onReceive's main thread:
-                // handle async with goAsync so firing stays exact even under load.
                 val pending = goAsync()
                 CoroutineScope(Dispatchers.Default).launch {
                     try {
@@ -76,25 +71,38 @@ class AlarmBroadcastReceiver : BroadcastReceiver() {
         val alarmTime = intent.getStringExtra(AlarmOverlayActivity.EXTRA_ALARM_TIME) ?: "07:00"
         val isOnce = intent.getBooleanExtra(EXTRA_IS_ONCE, false)
         val attempt = intent.getIntExtra(EXTRA_RETRIGGER_COUNT, 0)
+        val waitCount = intent.getIntExtra(EXTRA_WAIT_COUNT, 0)
         val alarmId = intent.getLongExtra(EXTRA_ALARM_ID, 0L)
         val dismissAt = intent.getLongExtra(EXTRA_DISMISS_AT, 0L)
-        // Another overlay showing (e.g. another alarm firing) = user clearly
-        // interacting with the phone -> assume awake, don't repeat.
-        if (AlarmOverlayActivity.isShowing) {
-            cancelSmartWakeReminder(context)
-            sendAutoRepeatCompleteNotification(context, alarmTime)
-            if (isOnce) disableAlarm(context, alarmTime)
-            return
-        }
-        val awake = isUserAwake(context, dismissAt)
-        if (!awake) {
-            scheduleReTrigger(context, alarmTime, attempt, alarmId)
-            // Leave the reminder posted at dismiss alive until the next
-            // re-trigger fires (then cancelled in onReceive).
-        } else {
-            cancelSmartWakeReminder(context)
-            sendAutoRepeatCompleteNotification(context, alarmTime)
-            if (isOnce) disableAlarm(context, alarmTime)
+        val checkKey = AlarmChainHelper.alarmKey(alarmId, alarmTime)
+        when (
+            AlarmChainHelper.decideUsageCheck(
+                AlarmOverlayActivity.isShowing,
+                AlarmOverlayActivity.showingAlarmKey,
+                checkKey
+            ) {
+                isUserAwake(context, dismissAt)
+            }
+        ) {
+            AlarmChainHelper.UsageCheckOutcome.KEEP_WAITING_SAME_ALARM -> {
+                // Alarm yang sama masih bunyi di layar: belum ada hasil dismiss
+                // yang bisa dinilai, jadi tunggu dan cek lagi 60 detik.
+                // Bounded: berhenti setelah MAX_KEEP_WAITING_CHECKS agar tidak
+                // jadi exact alarm tiap menit selamanya bila overlay nyangkut
+                // (kasus normal selesai jauh sebelum cap via auto-dismiss).
+                if (waitCount < MAX_KEEP_WAITING_CHECKS) {
+                    scheduleUsageCheck(context, alarmTime, isOnce, attempt, alarmId, dismissAt, waitCount + 1)
+                }
+                return
+            }
+            AlarmChainHelper.UsageCheckOutcome.RE_TRIGGER -> {
+                scheduleReTrigger(context, alarmTime, attempt, alarmId)
+            }
+            AlarmChainHelper.UsageCheckOutcome.COMPLETE -> {
+                cancelSmartWakeReminder(context)
+                sendAutoRepeatCompleteNotification(context, alarmTime, alarmId)
+                if (isOnce) disableAlarm(context, alarmTime, alarmId)
+            }
         }
     }
 
@@ -110,26 +118,14 @@ class AlarmBroadcastReceiver : BroadcastReceiver() {
             }
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
         }
-
-        // 1. Audio first, directly from receiver: on Android 12+ background activity
-        //    launch from receiver while screen is off/locked is blocked by the system, so
-        //    relying on the Activity to play sound = totally silent alarm.
-        //    If FGS-start is denied by the system (not exemption), ignore — the Activity
-        //    opened via full-screen intent will replay.
         try {
-            com.etrisad.zenith.service.AlarmPlaybackService.start(context, alarmTime)
+            com.etrisad.zenith.service.AlarmPlaybackService.start(context, alarmTime, alarmId)
         } catch (e: Exception) {
         }
-
-        // 2. Best-effort direct launch: works when screen is on/unlocked, blocked by
-        //    the system when locked — path (3) takes over for that case.
         try {
             context.startActivity(activityIntent)
         } catch (e: Exception) {
         }
-
-        // 3. Official lockscreen path: full-screen intent. The system decides
-        //    opening the overlay above the keyguard — not us via requestDismiss.
         fireAlarmNotification(context, alarmTime, snoozeCount, activityIntent, alarmId)
     }
 
@@ -138,28 +134,17 @@ class AlarmBroadcastReceiver : BroadcastReceiver() {
             val channelId = CHANNEL_ID_FIRING
             val manager = context.getSystemService(NotificationManager::class.java)
             ensureFiringChannel(context)
-
-            // Android 14+: user bisa mencabut izin full-screen intent per-app; kalau
-            // dicabut, sistem mengabaikan setFullScreenIntent dan overlay tidak akan
-            // muncul di atas lockscreen (hanya heads-up/notif biasa).
             if (Build.VERSION.SDK_INT >= 34) {
                 try {
                     if (manager != null && !manager.canUseFullScreenIntent()) {
                     }
                 } catch (_: Exception) { }
             }
-
-            // Request code unik per alarm agar tap notif membuka jam yang benar.
-            // Dulu requestCode=0 untuk semua alarm sehingga PendingIntent saling timpa.
             val contentRequestCode = notificationRequestCode(alarmTime, alarmId, 11)
             val pendingIntent = PendingIntent.getActivity(
                 context, contentRequestCode, activityIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
-
-            // Ongoing + tidak auto-cancel: notif adalah pintu darurat membuka
-            // overlay (kasus sistem menahan FSI). Dihapus eksplisit saat alarm
-            // di-dismiss/snooze via cancelFiringNotification, jadi tidak nyangkut.
             val builder = NotificationCompat.Builder(context, channelId)
                 .setContentTitle(if (snoozeCount > 0) "Snoozed Alarm" else "Alarm")
                 .setContentText("It's $alarmTime!")
@@ -181,12 +166,13 @@ class AlarmBroadcastReceiver : BroadcastReceiver() {
         }
     }
 
-    private suspend fun sendAutoRepeatCompleteNotification(context: Context, alarmTime: String) {
+    private suspend fun sendAutoRepeatCompleteNotification(context: Context, alarmTime: String, alarmId: Long = 0L) {
         try {
             val alarmName = try {
                 val app = context.applicationContext as ZenithApplication
-                app.userPreferencesRepository.getAlarmsSnapshot()
-                    .find { it.timeString == alarmTime }?.name
+                AlarmChainHelper.findAlarm(
+                    app.userPreferencesRepository.getAlarmsSnapshot(), alarmId, alarmTime
+                )?.name
             } catch (_: Exception) { null }
             val display = alarmName?.let { "$it at $alarmTime" } ?: alarmTime
             ensureInfoChannel(context)
@@ -200,36 +186,11 @@ class AlarmBroadcastReceiver : BroadcastReceiver() {
                 .setAutoCancel(true)
                 .setOngoing(false)
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                // Relevan sesaat saja; jangan menumpuk di shade.
                 builder.setTimeoutAfter(120_000L)
             }
             manager.notify(NOTIFICATION_ID_COMPLETE, builder.build())
         } catch (_: Exception) { }
     }
-
-    /**
-     * Smart-wake check: "is the user really using the phone after dismiss?"
-     *
-     * Lessons from two previous iterations:
-     * - v1 (any single event = awake): SystemUI/keyguard at dismiss counted
-     *   too -> false positive.
-     * - v2 (total foreground duration >= 15s = awake): launcher left showing
-     *   after overlay close counted its tail up to 60s -> ALWAYS
-     *   considered awake -> repeat NEVER fired. Presence duration != interaction.
-     *
-     * v3 (current), layered:
-     * 1. Screen off -> asleep -> REPEAT. (Put down, screen timeout.)
-     * 2. Keyguard locked -> asleep -> REPEAT. (Power button / back to sleep.)
-     * 3. Screen on + unlocked -> needs proof of REAL interaction after
-     *    5s grace (overlay-close transition ignored):
-     *    - a non-launcher app opened, OR
-     *    - a non-launcher app staying >= 20s (e.g. reading before
-     *      the alarm fired and continuing), OR
-     *    - launcher entering foreground >= 2x (back-and-forth nav/home).
-     *    Sitting idle on home screen with screen on does NOT count as using.
-     * - Without PACKAGE_USAGE_STATS permission: fail-safe = assume awake (stop repeat,
-     *   avoid 12x spam).
-     */
     internal fun hasRecentUsage(context: Context, dismissAtMs: Long): Boolean {
         return isUserAwake(context, dismissAtMs)
     }
@@ -406,6 +367,20 @@ class AlarmBroadcastReceiver : BroadcastReceiver() {
             return base + hour * 100 + minute
         }
 
+        /**
+         * Strict HH:mm parse. Returns null for corrupt/draft strings instead
+         * of throwing NumberFormatException (one bad alarmsJson entry must not
+         * crash reschedule of all other alarms).
+         */
+        private fun parseHourMinute(alarmTime: String): Pair<Int, Int>? {
+            val parts = alarmTime.split(":")
+            if (parts.size != 2) return null
+            val hour = parts[0].toIntOrNull() ?: return null
+            val minute = parts[1].toIntOrNull() ?: return null
+            if (hour !in 0..23 || minute !in 0..59) return null
+            return hour to minute
+        }
+
         private fun requestCodeForId(base: Int, alarmTime: String, alarmId: Long): Int {
             val parts = alarmTime.split(":")
             val hour = parts.getOrNull(0)?.toIntOrNull() ?: 0
@@ -421,6 +396,26 @@ class AlarmBroadcastReceiver : BroadcastReceiver() {
             val base = (alarmTime.hashCode() and 0x7fffffff) % 10000
             val idPart = (((alarmId % 1000L + 1000L) % 1000L).toInt() * 100) % 100000
             return 20000 + salt * 100000 + base + idPart
+        }
+
+        /**
+         * Cancels an existing PendingIntent without creating one when absent.
+         * The old code used FLAG_UPDATE_CURRENT (create-if-absent) just to
+         * cancel, manufacturing thousands of PendingIntents per full sweep
+         * (1440 x 3 in cancelAlarm(null)) for zero effect.
+         */
+        private fun cancelPendingIfExists(context: Context, requestCode: Int, action: String) {
+            val intent = Intent(context, AlarmBroadcastReceiver::class.java).apply {
+                this.action = action
+            }
+            val pi = PendingIntent.getBroadcast(
+                context, requestCode, intent,
+                PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
+            ) ?: return
+            try {
+                (context.getSystemService(Context.ALARM_SERVICE) as AlarmManager).cancel(pi)
+            } catch (_: Exception) { }
+            try { pi.cancel() } catch (_: Exception) { }
         }
 
         fun hasExactAlarmPermission(context: Context): Boolean {
@@ -459,7 +454,7 @@ class AlarmBroadcastReceiver : BroadcastReceiver() {
         }
 
         fun scheduleAlarm(context: Context, alarmTime: String, days: Set<Int> = emptySet(), alarmId: Long = 0L) {
-            val (hour, minute) = alarmTime.split(":").map { it.toInt() }
+            val (hour, minute) = parseHourMinute(alarmTime) ?: return
             val requestCode = if (alarmId > 0L) requestCodeForId(REQUEST_CODE_ALARM_BASE, alarmTime, alarmId)
             else REQUEST_CODE_ALARM_BASE + hour * 100 + minute
 
@@ -484,29 +479,18 @@ class AlarmBroadcastReceiver : BroadcastReceiver() {
         }
 
         fun cancelAlarm(context: Context, alarmTime: String?, alarmId: Long = 0L) {
-            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
             if (alarmTime != null) {
-                val (hour, minute) = alarmTime.split(":").map { it.toInt() }
-                val requestCode = REQUEST_CODE_ALARM_BASE + hour * 100 + minute
-                val intent = Intent(context, AlarmBroadcastReceiver::class.java).apply {
-                    action = ACTION_FIRE_ALARM
-                }
-                val pendingIntent = PendingIntent.getBroadcast(
-                    context, requestCode, intent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-                alarmManager.cancel(pendingIntent)
-                pendingIntent.cancel()
-                if (alarmId > 0L) {
-                    val idIntent = Intent(context, AlarmBroadcastReceiver::class.java).apply {
-                        action = ACTION_FIRE_ALARM
-                    }
-                    val idPendingIntent = PendingIntent.getBroadcast(
-                        context, requestCodeForId(REQUEST_CODE_ALARM_BASE, alarmTime, alarmId), idIntent,
-                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                val parsed = parseHourMinute(alarmTime)
+                if (parsed != null) {
+                    val (hour, minute) = parsed
+                    cancelPendingIfExists(
+                        context, REQUEST_CODE_ALARM_BASE + hour * 100 + minute, ACTION_FIRE_ALARM
                     )
-                    alarmManager.cancel(idPendingIntent)
-                    idPendingIntent.cancel()
+                }
+                if (alarmId > 0L) {
+                    cancelPendingIfExists(
+                        context, requestCodeForId(REQUEST_CODE_ALARM_BASE, alarmTime, alarmId), ACTION_FIRE_ALARM
+                    )
                     // Migrasi: batalkan juga kode lama ((id % 200000) * 2400) agar tidak
                     // ada exact alarm hantu yang lolos setelah update aplikasi.
                     try {
@@ -515,12 +499,7 @@ class AlarmBroadcastReceiver : BroadcastReceiver() {
                         val m = parts.getOrNull(1)?.toIntOrNull() ?: 0
                         val legacyIdCode = REQUEST_CODE_ALARM_BASE + h * 100 + m +
                             ((alarmId % 200000L) * 2400L).toInt()
-                        val legacyPi = PendingIntent.getBroadcast(
-                            context, legacyIdCode, idIntent,
-                            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                        )
-                        alarmManager.cancel(legacyPi)
-                        legacyPi.cancel()
+                        cancelPendingIfExists(context, legacyIdCode, ACTION_FIRE_ALARM)
                     } catch (_: Exception) { }
                 }
                 cancelReTrigger(context, alarmTime, alarmId)
@@ -532,38 +511,15 @@ class AlarmBroadcastReceiver : BroadcastReceiver() {
             } else {
                 for (h in 0..23) {
                     for (m in 0..59) {
-                        val requestCode = REQUEST_CODE_ALARM_BASE + h * 100 + m
-                        val intent = Intent(context, AlarmBroadcastReceiver::class.java).apply {
-                            action = ACTION_FIRE_ALARM
-                        }
-                        val pendingIntent = PendingIntent.getBroadcast(
-                            context, requestCode, intent,
-                            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                        cancelPendingIfExists(
+                            context, REQUEST_CODE_ALARM_BASE + h * 100 + m, ACTION_FIRE_ALARM
                         )
-                        alarmManager.cancel(pendingIntent)
-                        pendingIntent.cancel()
-
-                        val reTriggerIntent = Intent(context, AlarmBroadcastReceiver::class.java).apply {
-                            action = ACTION_RE_TRIGGER
-                        }
-                        val reTriggerCode = REQUEST_CODE_RE_TRIGGER_BASE + h * 100 + m
-                        val reTriggerPi = PendingIntent.getBroadcast(
-                            context, reTriggerCode, reTriggerIntent,
-                            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                        cancelPendingIfExists(
+                            context, REQUEST_CODE_RE_TRIGGER_BASE + h * 100 + m, ACTION_RE_TRIGGER
                         )
-                        alarmManager.cancel(reTriggerPi)
-                        reTriggerPi.cancel()
-
-                        val usageIntent = Intent(context, AlarmBroadcastReceiver::class.java).apply {
-                            action = ACTION_CHECK_USAGE
-                        }
-                        val usageCode = REQUEST_CODE_CHECK_BASE + h * 100 + m
-                        val usagePi = PendingIntent.getBroadcast(
-                            context, usageCode, usageIntent,
-                            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                        cancelPendingIfExists(
+                            context, REQUEST_CODE_CHECK_BASE + h * 100 + m, ACTION_CHECK_USAGE
                         )
-                        alarmManager.cancel(usagePi)
-                        usagePi.cancel()
                     }
                 }
                 cancelAllAlarmNotifications(context)
@@ -577,7 +533,8 @@ class AlarmBroadcastReceiver : BroadcastReceiver() {
             isOnce: Boolean = false,
             retriggerAttempt: Int = 0,
             alarmId: Long = 0L,
-            dismissAtMs: Long = System.currentTimeMillis()
+            dismissAtMs: Long = System.currentTimeMillis(),
+            waitCount: Int = 0
         ) {
             val intent = Intent(context, AlarmBroadcastReceiver::class.java).apply {
                 action = ACTION_CHECK_USAGE
@@ -585,6 +542,7 @@ class AlarmBroadcastReceiver : BroadcastReceiver() {
                 putExtra(EXTRA_IS_ONCE, isOnce)
                 putExtra(EXTRA_RETRIGGER_COUNT, retriggerAttempt)
                 putExtra(EXTRA_DISMISS_AT, dismissAtMs)
+                putExtra(EXTRA_WAIT_COUNT, waitCount)
                 if (alarmId > 0L) putExtra(EXTRA_ALARM_ID, alarmId)
             }
 
@@ -642,29 +600,25 @@ class AlarmBroadcastReceiver : BroadcastReceiver() {
 
         @JvmOverloads
         fun cancelUsageCheck(context: Context, alarmTime: String, alarmId: Long = 0L) {
-            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            val intent = Intent(context, AlarmBroadcastReceiver::class.java).apply {
-                action = ACTION_CHECK_USAGE
-            }
-            val requestCode = requestCodeFor(REQUEST_CODE_CHECK_BASE, alarmTime)
-            val pendingIntent = PendingIntent.getBroadcast(
-                context, requestCode, intent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            cancelPendingIfExists(
+                context, requestCodeFor(REQUEST_CODE_CHECK_BASE, alarmTime), ACTION_CHECK_USAGE
             )
-            alarmManager.cancel(pendingIntent)
-            pendingIntent.cancel()
             if (alarmId > 0L) {
-                val idPi = PendingIntent.getBroadcast(
-                    context, requestCodeForId(REQUEST_CODE_CHECK_BASE, alarmTime, alarmId), intent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                cancelPendingIfExists(
+                    context, requestCodeForId(REQUEST_CODE_CHECK_BASE, alarmTime, alarmId), ACTION_CHECK_USAGE
                 )
-                alarmManager.cancel(idPi)
-                idPi.cancel()
             }
         }
 
         const val EXTRA_RETRIGGER_COUNT = "retrigger_count"
         private const val MAX_RE_TRIGGER_ATTEMPTS = 12
+        const val EXTRA_WAIT_COUNT = "wait_count"
+        /**
+         * Cap for KEEP_WAITING re-checks (60s apart ~= overlay 10-min
+         * auto-dismiss). Without this a stuck overlay would schedule exact
+         * alarms forever with an unchanged attempt counter.
+         */
+        private const val MAX_KEEP_WAITING_CHECKS = 10
 
         @JvmOverloads
         fun scheduleReTrigger(context: Context, alarmTime: String, attempt: Int = 0, alarmId: Long = 0L) {
@@ -695,49 +649,28 @@ class AlarmBroadcastReceiver : BroadcastReceiver() {
 
         @JvmOverloads
         fun cancelReTrigger(context: Context, alarmTime: String, alarmId: Long = 0L) {
-            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            val intent = Intent(context, AlarmBroadcastReceiver::class.java).apply {
-                action = ACTION_RE_TRIGGER
-            }
-            val requestCode = requestCodeFor(REQUEST_CODE_RE_TRIGGER_BASE, alarmTime)
-            val pendingIntent = PendingIntent.getBroadcast(
-                context, requestCode, intent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            cancelPendingIfExists(
+                context, requestCodeFor(REQUEST_CODE_RE_TRIGGER_BASE, alarmTime), ACTION_RE_TRIGGER
             )
-            alarmManager.cancel(pendingIntent)
-            pendingIntent.cancel()
             if (alarmId > 0L) {
-                val idPi = PendingIntent.getBroadcast(
-                    context, requestCodeForId(REQUEST_CODE_RE_TRIGGER_BASE, alarmTime, alarmId), intent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                cancelPendingIfExists(
+                    context, requestCodeForId(REQUEST_CODE_RE_TRIGGER_BASE, alarmTime, alarmId), ACTION_RE_TRIGGER
                 )
-                alarmManager.cancel(idPi)
-                idPi.cancel()
             }
             // Snooze memakai action yang sama dengan base berbeda; sapu juga agar
             // tidak ada snooze basi yang ikut berbunyi setelah repeat dibatalkan.
             for (i in 0..50) {
-                try {
-                    val snoozeLegacy = PendingIntent.getBroadcast(
-                        context,
-                        REQUEST_CODE_SNOOZE_BASE + (alarmTime.hashCode() and 0x7fffffff) % 1000 + i,
-                        intent,
-                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                    )
-                    alarmManager.cancel(snoozeLegacy)
-                    snoozeLegacy.cancel()
-                } catch (_: Exception) { }
+                cancelPendingIfExists(
+                    context,
+                    REQUEST_CODE_SNOOZE_BASE + (alarmTime.hashCode() and 0x7fffffff) % 1000 + i,
+                    ACTION_RE_TRIGGER
+                )
                 if (alarmId > 0L) {
-                    try {
-                        val snoozeId = PendingIntent.getBroadcast(
-                            context,
-                            requestCodeForId(REQUEST_CODE_SNOOZE_BASE, alarmTime, alarmId) + i,
-                            intent,
-                            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                        )
-                        alarmManager.cancel(snoozeId)
-                        snoozeId.cancel()
-                    } catch (_: Exception) { }
+                    cancelPendingIfExists(
+                        context,
+                        requestCodeForId(REQUEST_CODE_SNOOZE_BASE, alarmTime, alarmId) + i,
+                        ACTION_RE_TRIGGER
+                    )
                 }
             }
         }
@@ -763,15 +696,13 @@ class AlarmBroadcastReceiver : BroadcastReceiver() {
             }
         }
 
-        suspend fun disableAlarm(context: Context, alarmTime: String) {
+        suspend fun disableAlarm(context: Context, alarmTime: String, alarmId: Long = 0L) {
             try {
                 val app = context.applicationContext as ZenithApplication
-                var alarmId = 0L
                 val repo = app.userPreferencesRepository
-                val alarm = repo.getAlarmsSnapshot().find { it.timeString == alarmTime } ?: return
-                alarmId = alarm.id
+                val alarm = AlarmChainHelper.findAlarm(repo.getAlarmsSnapshot(), alarmId, alarmTime) ?: return
                 repo.updateAlarm(alarm.copy(enabled = false))
-                cancelAlarm(context, alarmTime, alarmId)
+                cancelAlarm(context, alarmTime, alarm.id)
             } catch (e: Exception) {
             }
         }
@@ -897,8 +828,9 @@ class AlarmBroadcastReceiver : BroadcastReceiver() {
 
                 val alarmName = try {
                     val app = context.applicationContext as ZenithApplication
-                    app.userPreferencesRepository.getAlarmsSnapshot()
-                        .find { it.timeString == alarmTime }?.name
+                    AlarmChainHelper.findAlarm(
+                        app.userPreferencesRepository.getAlarmsSnapshot(), alarmId, alarmTime
+                    )?.name
                 } catch (_: Exception) { null }
                 val namePart = alarmName?.let { "\"$it\" " } ?: ""
 
@@ -955,7 +887,12 @@ class AlarmBroadcastReceiver : BroadcastReceiver() {
         }
 
         private fun calculateTriggerMillis(alarmTime: String, days: Set<Int> = emptySet()): Long {
-            val time = LocalTime.parse(alarmTime, DateTimeFormatter.ofPattern("HH:mm"))
+            val parsed = try {
+                LocalTime.parse(alarmTime, DateTimeFormatter.ofPattern("HH:mm"))
+            } catch (_: Exception) {
+                return System.currentTimeMillis() + 24 * 60 * 60 * 1000L
+            }
+            val time = parsed
             val now = LocalTime.now()
 
             val calendar = Calendar.getInstance().apply {

@@ -171,7 +171,9 @@ fun WeekStepperIndicator(
                 } else {
                     FilledTonalIconButton(
                         onClick = { if (showPrevious) onPrevious() },
-                        enabled = showPrevious || prevAlpha > 0.02f,
+                        // Visibility-gated: an invisible-but-enabled button is
+                        // a 28dp dead-tap zone during the fade-out.
+                        enabled = showPrevious,
                         modifier = Modifier
                             .size(28.dp)
                             .graphicsLayer {
@@ -220,9 +222,15 @@ fun WeekStepperIndicator(
                 modifier = Modifier.size(28.dp).offset(x = (-1).dp),
                 contentAlignment = Alignment.Center
             ) {
-                FilledTonalIconButton(
-                    onClick = { if (showNext) onNext() },
-                    enabled = showNext || nextAlpha > 0.02f,
+                if (isLoading && !showNext) {
+                    LoadingIndicator(
+                        modifier = Modifier.size(16.dp),
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                } else {
+                    FilledTonalIconButton(
+                        onClick = { if (showNext) onNext() },
+                        enabled = showNext,
                     modifier = Modifier
                         .size(28.dp)
                         .graphicsLayer {
@@ -237,6 +245,7 @@ fun WeekStepperIndicator(
                         contentDescription = "Next week",
                         modifier = Modifier.size(20.dp)
                     )
+                }
                 }
             }
         }
