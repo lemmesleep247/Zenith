@@ -68,12 +68,6 @@ jobs:
           cache: gradle
 
       # --------------------------------------------------
-      # Android SDK
-      # --------------------------------------------------
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      # --------------------------------------------------
       # Gradle
       # --------------------------------------------------
       - name: Make Gradle executable
