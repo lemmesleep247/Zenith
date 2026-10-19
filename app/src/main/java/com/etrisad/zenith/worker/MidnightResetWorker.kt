@@ -1,7 +1,6 @@
 package com.etrisad.zenith.worker
 
 import android.content.Context
-import android.content.Intent
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.etrisad.zenith.data.preferences.UserPreferencesRepository
@@ -17,6 +16,7 @@ import kotlinx.coroutines.flow.first
 
 class MidnightResetWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
+        if (com.etrisad.zenith.crash.SafeMode.isEnabled(applicationContext)) return Result.success()
         SharedPrefsHelper.setShortsScreenTimeMs(applicationContext, 0L)
 
         val prefsRepo = UserPreferencesRepository(applicationContext)
@@ -24,12 +24,10 @@ class MidnightResetWorker(context: Context, params: WorkerParameters) : Coroutin
         val needsService = prefs.alarmMasterEnabled || prefs.bedtimeEnabled ||
             prefs.eyeCareEnabled || prefs.usageGlimpseEnabled || prefs.pomodoroEnabled
         if (needsService) {
-            val serviceIntent = Intent(applicationContext, com.etrisad.zenith.service.AppUsageMonitorService::class.java).apply {
-                action = ACTION_MIDNIGHT_RESET_SERVICE
-            }
-            try {
-                applicationContext.startForegroundService(serviceIntent)
-            } catch (_: Exception) {}
+            com.etrisad.zenith.service.AppUsageMonitorService.startMonitorService(
+                applicationContext,
+                ACTION_MIDNIGHT_RESET_SERVICE
+            )
         }
         if (needsService) {
             AlarmTasksSchedulingHelper.scheduleMidnightResetTask(applicationContext, prefs.dayStartHour, prefs.dayStartMinute)
