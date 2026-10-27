@@ -41,7 +41,6 @@ class AlarmPlaybackService : Service() {
     private var playbackGeneration = 0
     private var ttsRetryCount = 0
     private var vibrator: Vibrator? = null
-    /** Pre-alarm STREAM_ALARM level, restored on stop. -1 = nothing to restore. */
     private var originalAlarmVolume = -1
 
     @Volatile
@@ -154,9 +153,6 @@ class AlarmPlaybackService : Service() {
     }
 
     private fun playAlarmSound() {
-        // Preempt: drop the previous playback coroutine so two of them never
-        // race over mediaPlayer/tts. The stale one may already be inside
-        // withContext(Main); the generation guard below makes it a no-op.
         playbackJob?.cancel()
         gradualVolumeJob?.cancel()
         gradualVolumeJob = null
@@ -228,8 +224,6 @@ class AlarmPlaybackService : Service() {
                                     )
                                     mp.prepareAsync()
                                 } catch (e: Exception) {
-                                    // Fallback also failed: release so we don't
-                                    // sit in a "playing but silent" state.
                                     try { mp.release() } catch (_: Exception) { }
                                     if (mp === mediaPlayer) mediaPlayer = null
                                 }
@@ -282,8 +276,6 @@ class AlarmPlaybackService : Service() {
             tts?.shutdown()
             val duckedVolume = (musicVolume * 0.3f).coerceIn(0f, 1f)
             tts = android.speech.tts.TextToSpeech(this@AlarmPlaybackService) { status ->
-                // Stale init (preempted by a newer alarm): never speak, never
-                // overwrite the new generation's loop job.
                 if (generation != playbackGeneration) return@TextToSpeech
                 if (status == android.speech.tts.TextToSpeech.SUCCESS && isAlarmActive) {
                     tts?.language = locale

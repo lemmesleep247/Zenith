@@ -268,8 +268,6 @@ class AlarmOverlayActivity : ComponentActivity() {
 
         val newKey = AlarmChainHelper.alarmKey(newAlarmId, newAlarmTime)
         if (newKey != AlarmChainHelper.alarmKey(alarmId, alarmTime)) {
-            // Alarm lain preempt overlay: kunci window wake-up yang berjalan ke
-            // offset agar progres tidak hilang, slot dipertahankan per alarm.
             suspendWakeUpForSwitch()
         }
         alarmTime = newAlarmTime
@@ -280,8 +278,6 @@ class AlarmOverlayActivity : ComponentActivity() {
         testMathChallenge = intent.getBooleanExtra(EXTRA_TEST_MATH_CHALLENGE, false)
         testAlarmJson = intent.getStringExtra(EXTRA_TEST_ALARM_JSON)
         testGradualVolume = intent.getBooleanExtra(EXTRA_TEST_GRADUAL_VOLUME, false)
-        // Prefill UI dari slot yang dipertahankan agar progres tidak berkedip ke nol;
-        // LaunchedEffect setelah recompose akan me-resume window tracking-nya.
         val slot = wakeUpSlots[newKey]
         wakeUpAccumulatedSeconds = ((slot?.offsetMs ?: 0L) / 1000).toInt()
         wakeUpComplete = slot?.complete ?: false
@@ -384,7 +380,6 @@ class AlarmOverlayActivity : ComponentActivity() {
     }
 
     private fun snooze() {
-        // Test mode: snooze only closes the test, doesn't schedule a real alarm.
         if (testAlarmJson != null) {
             stopAlarmAndFinish()
             return
@@ -413,7 +408,6 @@ class AlarmOverlayActivity : ComponentActivity() {
                         resolvedId
                     )
                 } else {
-                    // Snooze quota spent: don't hang; fall back to the normal smart chain.
                     AlarmBroadcastReceiver.cancelSmartChain(this@AlarmOverlayActivity, wantTime, resolvedId)
                 }
             } catch (_: Exception) { }
@@ -475,8 +469,6 @@ class AlarmOverlayActivity : ComponentActivity() {
             bound = false
         } else {
             playbackService?.stopPlayback()
-            // Service may not have bound yet (e.g. overlay opened via notif);
-            // make sure sound stops with an explicit stopService.
             try { stopService(Intent(this, AlarmPlaybackService::class.java)) } catch (_: Exception) { }
         }
         if (wakeLock?.isHeld == true) {
@@ -503,12 +495,6 @@ class AlarmOverlayActivity : ComponentActivity() {
         }
         wakeLock = null
     }
-
-    /**
-     * Ask the system to show the unlock screen so startActivity to another
-     * app/Settings can run from above the lockscreen. Only called from explicit
-     * user action — never automatically when the alarm fires.
-     */
     private fun requestUnlockForExternalLaunch() {
         try {
             val keyguardManager = getSystemService(KEYGUARD_SERVICE) as KeyguardManager
@@ -532,8 +518,6 @@ class AlarmOverlayActivity : ComponentActivity() {
     }
 
     private fun openUsageAccessSettings() {
-        // Opening Settings needs the device unlocked: request unlock ONLY for this
-        // explicit user action, not automatically when the alarm fires.
         requestUnlockForExternalLaunch()
         try {
             startActivity(Intent(android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
@@ -568,7 +552,6 @@ class AlarmOverlayActivity : ComponentActivity() {
             if (!wakeUpTrackingActive) {
                 resumeWakeUpTracking(appPackages, durationSeconds)
             }
-            // Opening another app from above the lockscreen needs an unlock first.
             requestUnlockForExternalLaunch()
             try {
                 startActivity(intent)
@@ -576,8 +559,6 @@ class AlarmOverlayActivity : ComponentActivity() {
                 android.widget.Toast.makeText(this, "Couldn't open app", android.widget.Toast.LENGTH_SHORT).show()
             }
         } else {
-            // Package gone between setting and firing: don't stay silent; route to
-            // app info so the user understands, not a dead button.
             android.widget.Toast.makeText(this, "App couldn't be opened", android.widget.Toast.LENGTH_SHORT).show()
             requestUnlockForExternalLaunch()
             try {
@@ -588,12 +569,6 @@ class AlarmOverlayActivity : ComponentActivity() {
             } catch (_: Exception) { }
         }
     }
-
-    /**
-     * (Re)starts wake-up tracking for the currently displayed alarm, resuming
-     * from the preserved per-alarm offset instead of zero. Called from the
-     * compose LaunchedEffect and from explicit "open app" taps.
-     */
     private fun resumeWakeUpTracking(appPackages: List<String>, durationSeconds: Int) {
         val key = AlarmChainHelper.alarmKey(alarmId, alarmTime)
         val slot = wakeUpSlots.getOrPut(key) { WakeUpSlot() }
@@ -605,8 +580,6 @@ class AlarmOverlayActivity : ComponentActivity() {
                 return
             }
         }
-        // Kunci window yang mungkin masih terbuka (mis. retrigger alarm yang
-        // sama me-recompose) sebelum membuka window baru, agar tidak hilang.
         rollWakeUpWindowIntoOffset()
         val now = System.currentTimeMillis()
         synchronized(slot) {
@@ -619,12 +592,6 @@ class AlarmOverlayActivity : ComponentActivity() {
         wakeUpTrackingActive = true
         startWakeUpTracking(appPackages, durationSeconds)
     }
-
-    /**
-     * Preempt oleh alarm lain: hentikan job, kunci window yang berjalan ke
-     * offset via query [start, now) yang disjoint dengan window berikutnya.
-     * Slot dipertahankan sehingga kembali ke alarm ini akan me-resume.
-     */
     private fun suspendWakeUpForSwitch() {
         wakeUpJob?.cancel()
         wakeUpJob = null
@@ -641,8 +608,6 @@ class AlarmOverlayActivity : ComponentActivity() {
             start = slot.windowStartMs
             pkgs = slot.packages.toSet()
             if (start <= 0L || pkgs.isEmpty()) return
-            // Tutup window secara sinkron; snapshot async di bawah hanya menambahkan
-            // window yang persis ini satu kali, tidak peduli kapan ia selesai.
             slot.windowStartMs = 0L
         }
         val slotRef = slot
@@ -650,9 +615,6 @@ class AlarmOverlayActivity : ComponentActivity() {
         wakeUpRollJob = lifecycleScope.launch(Dispatchers.IO) {
             val windowMs = getAccumulatedForegroundMs(pkgs, start, end)
             if (windowMs > 0L) {
-                // Merging into a discarded slot object is harmless (it becomes
-                // garbage after clear); all live-slot coordination is via the
-                // synchronized block, never via map reads off the main thread.
                 synchronized(slotRef) {
                     slotRef.offsetMs = AlarmChainHelper.mergeWakeUpOffset(slotRef.offsetMs, windowMs)
                 }
@@ -699,7 +661,6 @@ class AlarmOverlayActivity : ComponentActivity() {
             val duration = if (durationSeconds != 120 || appPackages.isNotEmpty()) durationSeconds
             else configured?.wakeUpAppDurationSeconds ?: 120
             if (packages.isEmpty() || duration <= 0) {
-                // Invalid config (e.g. all apps uninstalled): don't gate.
                 withContextForMainSync {
                     if (AlarmChainHelper.alarmKey(alarmId, alarmTime) == key) {
                         wakeUpComplete = true
@@ -732,7 +693,6 @@ class AlarmOverlayActivity : ComponentActivity() {
                 )
                 val totalMs = AlarmChainHelper.mergeWakeUpOffset(savedOffset, windowMs)
                 withContext(Dispatchers.Main) {
-                    // Abaikan hasil basi: overlay sudah pindah ke alarm lain.
                     if (AlarmChainHelper.alarmKey(alarmId, alarmTime) != key) return@withContext
                     wakeUpAccumulatedSeconds = (totalMs / 1000).toInt()
                     if (AlarmChainHelper.isWakeUpComplete(totalMs, duration)) {
@@ -752,7 +712,6 @@ class AlarmOverlayActivity : ComponentActivity() {
     }
 
     private fun withContextForMainSync(block: () -> Unit) {
-        // Called from LaunchedEffect (Main) or IO; write state on Main.
         if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
             block()
         } else {
@@ -810,12 +769,6 @@ class AlarmOverlayActivity : ComponentActivity() {
 
         @Volatile
         var isShowing = false
-
-        /**
-         * Identitas alarm yang sedang ditampilkan overlay
-         * ([AlarmChainHelper.alarmKey]), agar usage-check bisa membedakan
-         * "alarm yang sama masih bunyi" vs "alarm lain yang preempt".
-         */
         @Volatile
         var showingAlarmKey: String? = null
             private set
@@ -828,13 +781,6 @@ class AlarmOverlayActivity : ComponentActivity() {
             }
             context.startActivity(intent)
         }
-
-        /**
-         * Fires the overlay immediately to preview a draft alarm setup without
-         * saving anything: the draft JSON is used instead of stored alarms,
-         * and dismissing/snoozing only stops the test (no reschedule, no
-         * smart-repeat, no stored-state writes).
-         */
         fun startTest(context: Context, alarmTime: String, alarmJson: String) {
             val intent = Intent(context, AlarmOverlayActivity::class.java).apply {
                 putExtra(EXTRA_ALARM_TIME, alarmTime)

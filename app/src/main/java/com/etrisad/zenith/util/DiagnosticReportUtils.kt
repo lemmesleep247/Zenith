@@ -63,8 +63,6 @@ object DiagnosticReportUtils {
         preferences: UserPreferences,
         userConfirmed: Boolean = false
     ): Result<Unit> = withContext(Dispatchers.IO) {
-        // Consent is enforced in the data layer, not just the UI checkbox:
-        // programmatic callers without explicit confirmation get a failure.
         if (!userConfirmed) {
             return@withContext Result.failure(
                 IllegalStateException("Export consent not confirmed")
@@ -105,7 +103,6 @@ object DiagnosticReportUtils {
                     addTextEntry(zip, "usage_graph_logs.txt", usageGraphLogs)
                     addTextEntry(zip, "logcat.txt", logcat)
                     try {
-                        // Caught crashes, so the report always explains an abrupt stop.
                         for ((name, content) in CrashStore.reportEntries(context)) {
                             addTextEntry(zip, name, sanitizeLogText(content))
                         }
@@ -250,6 +247,7 @@ object DiagnosticReportUtils {
         sb.appendLine("    \"developerMode\": ${p.developerModeEnabled},")
         sb.appendLine("    \"showDatabaseIndicator\": ${p.showDatabaseIndicator},")
         sb.appendLine("    \"whitelistedCount\": ${p.whitelistedPackages.size},")
+        sb.appendLine("    \"privateAppsCount\": ${p.privatePackages.size},")
         sb.appendLine("    \"excludedFromTrackingCount\": ${p.excludedFromTrackingPackages.size},")
         sb.appendLine("    \"autoBackupEnabled\": ${p.autoBackupEnabled},")
         sb.appendLine("    \"hasBackupDirectory\": ${p.backupDirectoryUri.isNotEmpty()},")
@@ -318,13 +316,6 @@ object DiagnosticReportUtils {
             appendLine("}")
         }
     }
-
-    /**
-     * Granted / not-granted states only, no details. Explains whole classes
-     * of bugs at a glance: shields never firing (accessibility/overlay off),
-     * stats stuck at zero (usage access off), bedtime DND not working,
-     * alarms inexact, service killed (battery optimization), Go-device limits.
-     */
     private fun buildSystemStatus(context: Context): String {
         fun check(block: () -> Boolean): Boolean = try {
             block()
@@ -348,12 +339,6 @@ object DiagnosticReportUtils {
             appendLine("}")
         }
     }
-
-    /**
-     * Counts and time range per buffer only — no message contents, so no
-     * package names or other details leak. Shows at a glance whether the
-     * shield/overlay pipeline was active recently and where errors cluster.
-     */
     private fun buildLogSummary(): String {
         fun esc(v: String) = v.replace("\\", "\\\\").replace("\"", "\\\"")
         fun iso(ts: Long): String = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).apply {

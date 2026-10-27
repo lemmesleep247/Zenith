@@ -26,4 +26,9 @@ interface InterceptedNotificationDao {
 
     @Query("SELECT COUNT(*) FROM intercepted_notifications")
     suspend fun getTotalCount(): Int
+
+    @Query("DELETE FROM intercepted_notifications WHERE packageName IN (:packages)")
+    suspend fun deleteByPackages(packages: List<String>)
+    @Query("UPDATE intercepted_notifications SET title = NULL, text = NULL")
+    suspend fun clearStoredContent()
 }

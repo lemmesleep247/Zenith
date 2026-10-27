@@ -24,6 +24,7 @@ import com.etrisad.zenith.ui.components.pausepoint.PausePointDefaults
 import com.etrisad.zenith.ui.components.pausepoint.PausePointTaskType
 import com.etrisad.zenith.ui.components.pausepoint.PausePointVariant
 import com.etrisad.zenith.data.repository.ShieldRepository
+import com.etrisad.zenith.admin.TamperPin
 import com.etrisad.zenith.crash.SafeMode
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.Types
@@ -314,6 +315,14 @@ val ACHIEVEMENT_BANNERS_SEEN = stringPreferencesKey("achievement_banners_seen")
         val SMART_REPAIR_ON_REFRESH = booleanPreferencesKey("smart_repair_on_refresh")
         val ALLOW_REPAIR_NON_UNAVAILABLE = booleanPreferencesKey("allow_repair_non_unavailable")
         val MINDFUL_GATEWAY_ENABLED = booleanPreferencesKey("mindful_gateway_enabled")
+        val MINDFUL_GATEWAY_MAX_USES = intPreferencesKey("mindful_gateway_max_uses")
+        val MINDFUL_GATEWAY_REFRESH_MINUTES = intPreferencesKey("mindful_gateway_refresh_minutes")
+        val MINDFUL_GATEWAY_MAX_EMERGENCY_USES = intPreferencesKey("mindful_gateway_max_emergency_uses")
+        val MINDFUL_GATEWAY_REMINDERS_ENABLED = booleanPreferencesKey("mindful_gateway_reminders_enabled")
+        val MINDFUL_GATEWAY_STRICT_MODE_ENABLED = booleanPreferencesKey("mindful_gateway_strict_mode_enabled")
+        val MINDFUL_GATEWAY_PAUSE_POINT_ENABLED = booleanPreferencesKey("mindful_gateway_pause_point_enabled")
+        val MINDFUL_GATEWAY_END_OVERLAY_ENABLED = booleanPreferencesKey("mindful_gateway_end_overlay_enabled")
+        val MINDFUL_GATEWAY_AUTO_QUIT_ENABLED = booleanPreferencesKey("mindful_gateway_auto_quit_enabled")
         val REFRESH_ON_OPEN_USAGE_STATS = booleanPreferencesKey("refresh_on_open_usage_stats")
         val CHECK_UPDATE_ON_START = booleanPreferencesKey("check_update_on_start")
         val BATTERY_STATS_RESET_ENABLED = booleanPreferencesKey("battery_stats_reset_enabled")
@@ -384,6 +393,11 @@ val ACHIEVEMENT_BANNERS_SEEN = stringPreferencesKey("achievement_banners_seen")
         val DISABLE_TRACKING_START_HOUR = intPreferencesKey("disable_tracking_start_hour")
         val DISABLE_TRACKING_END_HOUR = intPreferencesKey("disable_tracking_end_hour")
         val EXCLUDED_FROM_TRACKING_PACKAGES = stringPreferencesKey("excluded_from_tracking_packages")
+        val PRIVATE_PACKAGES = stringPreferencesKey("private_packages")
+        val ACCESSIBILITY_LIMITED_MODE = booleanPreferencesKey("accessibility_limited_mode")
+        val NOTIFICATION_INTERCEPTION_ENABLED = booleanPreferencesKey("notification_interception_enabled")
+        val NOTIFICATION_EXCLUDED_PACKAGES = stringPreferencesKey("notification_excluded_packages")
+        val STORE_INTERCEPTED_NOTIFICATION_CONTENT = booleanPreferencesKey("store_intercepted_notification_content")
 
         val ALARM_ENABLED = booleanPreferencesKey("alarm_enabled")
         val ALARM_TIME = stringPreferencesKey("alarm_time")
@@ -398,6 +412,11 @@ val ACHIEVEMENT_BANNERS_SEEN = stringPreferencesKey("achievement_banners_seen")
         val LOCKDOWN_START_TIME = stringPreferencesKey("lockdown_start_time")
         val LOCKDOWN_END_TIME = stringPreferencesKey("lockdown_end_time")
         val LOCKDOWN_DAYS = stringPreferencesKey("lockdown_days")
+
+        val TAMPER_PROTECTION_ENABLED = booleanPreferencesKey("tamper_protection_enabled")
+        val TAMPER_LOCK_TO_LOCKDOWN = booleanPreferencesKey("tamper_lock_to_lockdown")
+        val TAMPER_PIN_SALT = stringPreferencesKey("tamper_pin_salt")
+        val TAMPER_PIN_HASH = stringPreferencesKey("tamper_pin_hash")
 
         val POMODORO_ENABLED = booleanPreferencesKey("pomodoro_enabled")
         val POMODORO_ALLOWED_PACKAGES = stringPreferencesKey("pomodoro_allowed_packages")
@@ -478,6 +497,11 @@ val ACHIEVEMENT_BANNERS_SEEN = stringPreferencesKey("achievement_banners_seen")
             sessionUsageOverlayOpacity = settings[PreferencesKeys.SESSION_USAGE_OVERLAY_OPACITY] ?: 90,
             whitelistedPackages = settings[PreferencesKeys.WHITELISTED_PACKAGES]?.split(",")?.filter { it.isNotEmpty() }?.toSet() ?: emptySet(),
             excludedFromTrackingPackages = settings[PreferencesKeys.EXCLUDED_FROM_TRACKING_PACKAGES]?.split(",")?.filter { it.isNotEmpty() }?.toSet() ?: emptySet(),
+            privatePackages = settings[PreferencesKeys.PRIVATE_PACKAGES]?.split(",")?.filter { it.isNotEmpty() }?.toSet() ?: emptySet(),
+            accessibilityLimitedMode = settings[PreferencesKeys.ACCESSIBILITY_LIMITED_MODE] ?: false,
+            notificationInterceptionEnabled = settings[PreferencesKeys.NOTIFICATION_INTERCEPTION_ENABLED] ?: true,
+            notificationExcludedPackages = settings[PreferencesKeys.NOTIFICATION_EXCLUDED_PACKAGES]?.split(",")?.filter { it.isNotEmpty() }?.toSet() ?: emptySet(),
+            storeInterceptedNotificationContent = settings[PreferencesKeys.STORE_INTERCEPTED_NOTIFICATION_CONTENT] ?: true,
             lastResetDate = runtime[RuntimeKeys.LAST_RESET_DATE] ?: "",
             lastWeeklyResetDate = runtime[RuntimeKeys.LAST_WEEKLY_RESET_DATE] ?: 0L,
             lastStreakCheckDate = runtime[RuntimeKeys.LAST_STREAK_CHECK_DATE] ?: "",
@@ -549,6 +573,14 @@ achievementBannersSeen = settings[PreferencesKeys.ACHIEVEMENT_BANNERS_SEEN] ?: "
             allowRepairNonUnavailable = settings[PreferencesKeys.ALLOW_REPAIR_NON_UNAVAILABLE] ?: false,
             shortsScreenTimeMs = runtime[RuntimeKeys.SHORTS_SCREEN_TIME_MS] ?: 0L,
             mindfulGatewayEnabled = settings[PreferencesKeys.MINDFUL_GATEWAY_ENABLED] ?: false,
+            mindfulGatewayMaxUses = settings[PreferencesKeys.MINDFUL_GATEWAY_MAX_USES] ?: MindfulGatewayDefaults.MAX_USES_PER_PERIOD,
+            mindfulGatewayRefreshMinutes = settings[PreferencesKeys.MINDFUL_GATEWAY_REFRESH_MINUTES] ?: MindfulGatewayDefaults.REFRESH_PERIOD_MINUTES,
+            mindfulGatewayMaxEmergencyUses = settings[PreferencesKeys.MINDFUL_GATEWAY_MAX_EMERGENCY_USES] ?: MindfulGatewayDefaults.MAX_EMERGENCY_USES,
+            mindfulGatewayRemindersEnabled = settings[PreferencesKeys.MINDFUL_GATEWAY_REMINDERS_ENABLED] ?: MindfulGatewayDefaults.REMINDERS_ENABLED,
+            mindfulGatewayStrictModeEnabled = settings[PreferencesKeys.MINDFUL_GATEWAY_STRICT_MODE_ENABLED] ?: MindfulGatewayDefaults.STRICT_MODE_ENABLED,
+            mindfulGatewayPausePointEnabled = settings[PreferencesKeys.MINDFUL_GATEWAY_PAUSE_POINT_ENABLED] ?: MindfulGatewayDefaults.PAUSE_POINT_ENABLED,
+            mindfulGatewayEndOverlayEnabled = settings[PreferencesKeys.MINDFUL_GATEWAY_END_OVERLAY_ENABLED] ?: MindfulGatewayDefaults.END_OVERLAY_ENABLED,
+            mindfulGatewayAutoQuitEnabled = settings[PreferencesKeys.MINDFUL_GATEWAY_AUTO_QUIT_ENABLED] ?: MindfulGatewayDefaults.AUTO_QUIT_ENABLED,
             refreshOnOpenUsageStats = settings[PreferencesKeys.REFRESH_ON_OPEN_USAGE_STATS] ?: false,
             checkUpdateOnStart = settings[PreferencesKeys.CHECK_UPDATE_ON_START] ?: false,
             batteryStatsResetEnabled = settings[PreferencesKeys.BATTERY_STATS_RESET_ENABLED] ?: false,
@@ -648,6 +680,8 @@ achievementBannersSeen = settings[PreferencesKeys.ACHIEVEMENT_BANNERS_SEEN] ?: "
             lockdownStartTime = settings[PreferencesKeys.LOCKDOWN_START_TIME] ?: "22:00",
             lockdownEndTime = settings[PreferencesKeys.LOCKDOWN_END_TIME] ?: "07:00",
             lockdownDays = settings[PreferencesKeys.LOCKDOWN_DAYS]?.split(",")?.filter { it.isNotEmpty() }?.map { it.toInt() }?.toSet() ?: setOf(1, 2, 3, 4, 5, 6, 7),
+            tamperProtectionEnabled = settings[PreferencesKeys.TAMPER_PROTECTION_ENABLED] ?: false,
+            tamperLockToLockdown = settings[PreferencesKeys.TAMPER_LOCK_TO_LOCKDOWN] ?: true,
             dismissedUninstalledApps = runtime[RuntimeKeys.DISMISSED_UNINSTALLED_APPS]
                 ?.split(",")
                 ?.filter { it.isNotEmpty() }
@@ -943,8 +977,6 @@ achievementBannersSeen = settings[PreferencesKeys.ACHIEVEMENT_BANNERS_SEEN] ?: "
     }
 
     suspend fun setScreenTimeTarget(minutes: Int) {
-        // Direct key read: avoids building the full ~150-field UserPreferences
-        // (with Moshi parses) just to compare one int.
         val currentTarget = context.dataStore.data.first()[PreferencesKeys.SCREEN_TIME_TARGET] ?: 0
         context.dataStore.edit { preferences ->
             preferences[PreferencesKeys.SCREEN_TIME_TARGET] = minutes
@@ -980,8 +1012,27 @@ achievementBannersSeen = settings[PreferencesKeys.ACHIEVEMENT_BANNERS_SEEN] ?: "
         context.dataStore.edit { preferences -> preferences[PreferencesKeys.WHITELISTED_PACKAGES] = packages.joinToString(",") }
     }
 
-    suspend fun setExcludedFromTrackingPackages(packages: Set<String>) {
-        context.dataStore.edit { preferences -> preferences[PreferencesKeys.EXCLUDED_FROM_TRACKING_PACKAGES] = packages.joinToString(",") }
+    suspend fun setAppExclusions(privatePackages: Set<String>, usageOnlyPackages: Set<String>) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.PRIVATE_PACKAGES] = privatePackages.joinToString(",")
+            preferences[PreferencesKeys.EXCLUDED_FROM_TRACKING_PACKAGES] = usageOnlyPackages.joinToString(",")
+        }
+    }
+
+    suspend fun setAccessibilityLimitedMode(enabled: Boolean) {
+        context.dataStore.edit { preferences -> preferences[PreferencesKeys.ACCESSIBILITY_LIMITED_MODE] = enabled }
+    }
+
+    suspend fun setNotificationInterceptionEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences -> preferences[PreferencesKeys.NOTIFICATION_INTERCEPTION_ENABLED] = enabled }
+    }
+
+    suspend fun setNotificationExcludedPackages(packages: Set<String>) {
+        context.dataStore.edit { preferences -> preferences[PreferencesKeys.NOTIFICATION_EXCLUDED_PACKAGES] = packages.joinToString(",") }
+    }
+
+    suspend fun setStoreInterceptedNotificationContent(enabled: Boolean) {
+        context.dataStore.edit { preferences -> preferences[PreferencesKeys.STORE_INTERCEPTED_NOTIFICATION_CONTENT] = enabled }
     }
 
     suspend fun setIncentiveLockEnabled(enabled: Boolean) {
@@ -1057,7 +1108,6 @@ achievementBannersSeen = settings[PreferencesKeys.ACHIEVEMENT_BANNERS_SEEN] ?: "
     }
 
     suspend fun initializeDefaultWhitelist() {
-        // Direct key reads: this runs at startup, avoid the full prefs build.
         val initialized = context.runtimeDataStore.data.first()[RuntimeKeys.WHITELIST_INITIALIZED] ?: false
         val existing = context.dataStore.data.first()[PreferencesKeys.WHITELISTED_PACKAGES]
             ?.split(",")?.filter { it.isNotEmpty() }?.toSet() ?: emptySet()
@@ -1142,7 +1192,7 @@ achievementBannersSeen = settings[PreferencesKeys.ACHIEVEMENT_BANNERS_SEEN] ?: "
             lPkg to lApps
         }
 
-        val excludePackages = setOfNotNull(context.packageName, launcherPackage) + prefs.whitelistedPackages + prefs.bedtimeWhitelistedPackages + prefs.excludedFromTrackingPackages
+        val excludePackages = setOfNotNull(context.packageName, launcherPackage) + prefs.whitelistedPackages + prefs.bedtimeWhitelistedPackages + prefs.excludedFromTrackingPackages + prefs.privatePackages
 
         var liveStreak = 0
         var currentBest = prefs.bedtimeBestStreak
@@ -1379,7 +1429,6 @@ achievementBannersSeen = settings[PreferencesKeys.ACHIEVEMENT_BANNERS_SEEN] ?: "
     }
 
     suspend fun isGracePeriodEditAllowed(): Boolean {
-        // Direct key reads: avoid the full prefs build for two keys.
         val preferences = context.dataStore.data.first()
         if (!(preferences[PreferencesKeys.GRACE_PERIOD_EDIT_LOCK_ENABLED] ?: false)) return true
         val last = preferences[PreferencesKeys.GRACE_PERIOD_LAST_EDIT_TIMESTAMP] ?: 0L
@@ -1405,7 +1454,6 @@ achievementBannersSeen = settings[PreferencesKeys.ACHIEVEMENT_BANNERS_SEEN] ?: "
 
     suspend fun setGracePeriodStartTime(time: String): Boolean {
         if (!isGracePeriodEditAllowed()) return false
-        // Direct key read for the paired value: avoid the full prefs build.
         val endTime = context.dataStore.data.first()[PreferencesKeys.GRACE_PERIOD_END_TIME] ?: "13:00"
         if (!isGracePeriodDurationValid(time, endTime)) return false
         context.dataStore.edit { preferences ->
@@ -1417,7 +1465,6 @@ achievementBannersSeen = settings[PreferencesKeys.ACHIEVEMENT_BANNERS_SEEN] ?: "
 
     suspend fun setGracePeriodEndTime(time: String): Boolean {
         if (!isGracePeriodEditAllowed()) return false
-        // Direct key read for the paired value: avoid the full prefs build.
         val startTime = context.dataStore.data.first()[PreferencesKeys.GRACE_PERIOD_START_TIME] ?: "12:00"
         if (!isGracePeriodDurationValid(startTime, time)) return false
         context.dataStore.edit { preferences ->
@@ -1510,6 +1557,28 @@ achievementBannersSeen = settings[PreferencesKeys.ACHIEVEMENT_BANNERS_SEEN] ?: "
 
     suspend fun setMindfulGatewayEnabled(enabled: Boolean) {
         context.dataStore.edit { preferences -> preferences[PreferencesKeys.MINDFUL_GATEWAY_ENABLED] = enabled }
+    }
+
+    suspend fun setMindfulGatewayDefaults(
+        maxUses: Int,
+        refreshMinutes: Int,
+        maxEmergencyUses: Int,
+        remindersEnabled: Boolean,
+        strictModeEnabled: Boolean,
+        pausePointEnabled: Boolean,
+        endOverlayEnabled: Boolean,
+        autoQuitEnabled: Boolean,
+    ) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.MINDFUL_GATEWAY_MAX_USES] = maxUses
+            preferences[PreferencesKeys.MINDFUL_GATEWAY_REFRESH_MINUTES] = refreshMinutes
+            preferences[PreferencesKeys.MINDFUL_GATEWAY_MAX_EMERGENCY_USES] = maxEmergencyUses
+            preferences[PreferencesKeys.MINDFUL_GATEWAY_REMINDERS_ENABLED] = remindersEnabled
+            preferences[PreferencesKeys.MINDFUL_GATEWAY_STRICT_MODE_ENABLED] = strictModeEnabled
+            preferences[PreferencesKeys.MINDFUL_GATEWAY_PAUSE_POINT_ENABLED] = pausePointEnabled
+            preferences[PreferencesKeys.MINDFUL_GATEWAY_END_OVERLAY_ENABLED] = endOverlayEnabled
+            preferences[PreferencesKeys.MINDFUL_GATEWAY_AUTO_QUIT_ENABLED] = autoQuitEnabled
+        }
     }
 
     suspend fun setRefreshOnOpenUsageStats(enabled: Boolean) {
@@ -1684,6 +1753,33 @@ achievementBannersSeen = settings[PreferencesKeys.ACHIEVEMENT_BANNERS_SEEN] ?: "
         context.dataStore.edit { preferences -> preferences[PreferencesKeys.LOCKDOWN_DAYS] = days.joinToString(",") }
     }
 
+    suspend fun setTamperProtectionEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences -> preferences[PreferencesKeys.TAMPER_PROTECTION_ENABLED] = enabled }
+    }
+
+    suspend fun setTamperLockToLockdown(enabled: Boolean) {
+        context.dataStore.edit { preferences -> preferences[PreferencesKeys.TAMPER_LOCK_TO_LOCKDOWN] = enabled }
+    }
+
+    suspend fun setTamperPin(pin: String) {
+        val salt = TamperPin.newSaltHex()
+        val hash = TamperPin.hash(pin, salt)
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.TAMPER_PIN_SALT] = salt
+            preferences[PreferencesKeys.TAMPER_PIN_HASH] = hash
+        }
+    }
+
+    suspend fun hasTamperPin(): Boolean =
+        context.dataStore.data.first()[PreferencesKeys.TAMPER_PIN_HASH]?.isNotEmpty() == true
+
+    suspend fun verifyTamperPin(pin: String): Boolean {
+        val stored = context.dataStore.data.first()
+        val salt = stored[PreferencesKeys.TAMPER_PIN_SALT] ?: return false
+        val expected = stored[PreferencesKeys.TAMPER_PIN_HASH] ?: return false
+        return TamperPin.matches(pin, salt, expected)
+    }
+
     suspend fun setPomodoroEnabled(enabled: Boolean) {
         context.dataStore.edit { preferences -> preferences[PreferencesKeys.POMODORO_ENABLED] = enabled }
     }
@@ -1812,22 +1908,14 @@ achievementBannersSeen = settings[PreferencesKeys.ACHIEVEMENT_BANNERS_SEEN] ?: "
     suspend fun setAlarmMasterEnabled(enabled: Boolean) {
         context.dataStore.edit { preferences -> preferences[PreferencesKeys.ALARM_MASTER_ENABLED] = enabled }
     }
-
-    // Cold flow of the parsed alarm list: subscribe instead of building the full
-    // ~150-field UserPreferences + re-parsing at every call site.
     val alarmsListFlow: Flow<List<AlarmItem>> = context.dataStore.data
         .map { prefs -> parseAlarms(prefs[PreferencesKeys.ALARMS_JSON] ?: "[]") }
         .distinctUntilChanged()
 
     suspend fun getAlarmsSnapshot(): List<AlarmItem> {
-        // Single-key read + cached adapter: callers must use this instead of
-        // building the full UserPreferences just to parse one JSON string.
         val json = context.dataStore.data.first()[PreferencesKeys.ALARMS_JSON] ?: "[]"
         return parseAlarms(json)
     }
-
-    // Serializes concurrent read-modify-writes of ALARMS_JSON (UI actions +
-    // watchdog/boot/overlay can interleave) so no update is silently lost.
     private val alarmsMutex = kotlinx.coroutines.sync.Mutex()
 
     suspend fun addAlarm(alarm: AlarmItem) {
@@ -1887,6 +1975,16 @@ achievementBannersSeen = settings[PreferencesKeys.ACHIEVEMENT_BANNERS_SEEN] ?: "
 
 
 }
+object MindfulGatewayDefaults {
+    const val MAX_USES_PER_PERIOD = 5
+    const val REFRESH_PERIOD_MINUTES = 60
+    const val MAX_EMERGENCY_USES = 3
+    const val REMINDERS_ENABLED = true
+    const val STRICT_MODE_ENABLED = false
+    const val PAUSE_POINT_ENABLED = true
+    const val END_OVERLAY_ENABLED = true
+    const val AUTO_QUIT_ENABLED = false
+}
 
 data class UserPreferences(
     val themeConfig: ThemeConfig = ThemeConfig.FOLLOW_SYSTEM,
@@ -1902,6 +2000,11 @@ data class UserPreferences(
     val sessionUsageOverlayOpacity: Int = 90,
     val whitelistedPackages: Set<String> = emptySet(),
     val excludedFromTrackingPackages: Set<String> = emptySet(),
+    val privatePackages: Set<String> = emptySet(),
+    val accessibilityLimitedMode: Boolean = false,
+    val notificationInterceptionEnabled: Boolean = true,
+    val notificationExcludedPackages: Set<String> = emptySet(),
+    val storeInterceptedNotificationContent: Boolean = true,
     val lastResetDate: String = "",
     val lastWeeklyResetDate: Long = 0L,
     val lastStreakCheckDate: String = "",
@@ -1970,6 +2073,14 @@ data class UserPreferences(
     val allowRepairNonUnavailable: Boolean = false,
     val shortsScreenTimeMs: Long = 0L,
     val mindfulGatewayEnabled: Boolean = false,
+    val mindfulGatewayMaxUses: Int = MindfulGatewayDefaults.MAX_USES_PER_PERIOD,
+    val mindfulGatewayRefreshMinutes: Int = MindfulGatewayDefaults.REFRESH_PERIOD_MINUTES,
+    val mindfulGatewayMaxEmergencyUses: Int = MindfulGatewayDefaults.MAX_EMERGENCY_USES,
+    val mindfulGatewayRemindersEnabled: Boolean = MindfulGatewayDefaults.REMINDERS_ENABLED,
+    val mindfulGatewayStrictModeEnabled: Boolean = MindfulGatewayDefaults.STRICT_MODE_ENABLED,
+    val mindfulGatewayPausePointEnabled: Boolean = MindfulGatewayDefaults.PAUSE_POINT_ENABLED,
+    val mindfulGatewayEndOverlayEnabled: Boolean = MindfulGatewayDefaults.END_OVERLAY_ENABLED,
+    val mindfulGatewayAutoQuitEnabled: Boolean = MindfulGatewayDefaults.AUTO_QUIT_ENABLED,
     val refreshOnOpenUsageStats: Boolean = false,
     val checkUpdateOnStart: Boolean = false,
     val batteryStatsResetEnabled: Boolean = false,
@@ -2006,6 +2117,8 @@ data class UserPreferences(
     val lockdownStartTime: String = "22:00",
     val lockdownEndTime: String = "07:00",
     val lockdownDays: Set<Int> = setOf(1, 2, 3, 4, 5, 6, 7),
+    val tamperProtectionEnabled: Boolean = false,
+    val tamperLockToLockdown: Boolean = true,
     val dismissedUninstalledApps: Map<String, String> = emptyMap(),
     val pomodoroEnabled: Boolean = false,
     val pomodoroAllowedPackages: Set<String> = emptySet(),

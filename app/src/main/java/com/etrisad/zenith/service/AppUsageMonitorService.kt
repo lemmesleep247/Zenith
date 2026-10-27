@@ -922,6 +922,16 @@ class AppUsageMonitorService : Service() {
                 SharedMonitoringState.whitelistedPackages = preferences.whitelistedPackages
                 SharedMonitoringState.bedtimeWhitelistedPackages = preferences.bedtimeWhitelistedPackages
                 SharedMonitoringState.excludedFromTrackingPackages = preferences.excludedFromTrackingPackages
+                val privateAppsChanged = SharedMonitoringState.privatePackages != preferences.privatePackages
+                SharedMonitoringState.privatePackages = preferences.privatePackages
+                SharedMonitoringState.accessibilityLimitedMode = preferences.accessibilityLimitedMode
+                SharedMonitoringState.notificationInterceptionEnabled = preferences.notificationInterceptionEnabled
+                SharedMonitoringState.notificationExcludedPackages = preferences.notificationExcludedPackages
+                SharedMonitoringState.storeInterceptedNotificationContent = preferences.storeInterceptedNotificationContent
+                SharedMonitoringState.updateRestrictedPackages()
+                if (privateAppsChanged) {
+                    com.etrisad.zenith.util.ScreenUsageHelper.clearCache()
+                }
 
                 val startParts = preferences.bedtimeStartTime.split(":")
                 val endParts = preferences.bedtimeEndTime.split(":")
@@ -1144,6 +1154,24 @@ class AppUsageMonitorService : Service() {
         if (SharedMonitoringState.launcherPackages.isEmpty() || currentTime - lastLauncherRefreshTime > 3600000) {
             refreshLauncherCache()
         }
+        if (SharedMonitoringState.isPrivatePackage(currentApp)) {
+            lastForegroundApp?.let { oldPkg ->
+                if (oldPkg.isNotEmpty() && oldPkg != currentApp && cachedTotalUsage > 0L) {
+                    SharedMonitoringState.lastKnownPackageUsage[oldPkg] = cachedTotalUsage
+                }
+            }
+            WebsiteStateHolder.currentWebsiteDomain.value?.let { domain ->
+                overlayActionHandler.scheduleWebsiteSessionDismiss("zenith-web:$domain")
+            }
+            overlayManager.hideOverlay()
+            sessionUsageOverlayManager.pauseAllSessions()
+            currentShieldCache = null
+            currentSessionPackage = currentApp
+            cachedTotalUsage = 0L
+            lastForegroundApp = currentApp
+            AppStateHolder.foregroundApp.value = currentApp
+            return
+        }
 
         val isLauncher = SharedMonitoringState.launcherPackages.contains(currentApp) ||
             currentApp == packageName ||
@@ -1298,6 +1326,7 @@ class AppUsageMonitorService : Service() {
 
     private suspend fun monitoringTick(currentApp: String) {
         val currentTime = System.currentTimeMillis()
+        if (SharedMonitoringState.isPrivatePackage(currentApp)) return
         val isLauncher = currentApp == packageName ||
             SharedMonitoringState.launcherPackages.contains(currentApp) ||
             currentApp.contains("launcher", ignoreCase = true) ||
@@ -2137,7 +2166,8 @@ class AppUsageMonitorService : Service() {
             refreshLauncherCache()
         }
 
-        val excludePackages = setOfNotNull(packageName, SharedMonitoringState.defaultLauncherPackage) + SharedMonitoringState.excludedFromTrackingPackages
+        val excludePackages = setOfNotNull(packageName, SharedMonitoringState.defaultLauncherPackage) +
+            SharedMonitoringState.excludedFromTrackingPackages + SharedMonitoringState.privatePackages
 
         var totalSum = 0L
         appUsageMap.forEach { (pkg, time) ->
@@ -2564,14 +2594,6 @@ class AppUsageMonitorService : Service() {
         DbLogBuffer.e("ZenithAUMS", "startForeground failed (withCamera=$withCamera): ${t.message}")
         false
     }
-
-    /**
-     * Starts the foreground notification with explicit service types. Never
-     * requests the camera type on a background-started service (Android 14+
-     * rejects it and the service would never reach the foreground state).
-     * Falls back to specialUse-only, and returns false when every attempt
-     * fails so the caller can stopSelf() before the system times out.
-     */
     private fun startForegroundSafely(): Boolean {
         val notification = createNotification("Protecting your focus...")
         val prefs = SharedMonitoringState.currentPreferences
@@ -2581,20 +2603,11 @@ class AppUsageMonitorService : Service() {
             return true
         }
         if (wantCamera && tryStartForeground(notification, false)) {
-            // Camera type was rejected (permission revoked, app not visible...):
-            // degrade to specialUse only so monitoring keeps running.
             cameraTypeActive = false
             return true
         }
         return false
     }
-
-    /**
-     * Upgrades the already-foreground service to include the camera type.
-     * Called when the app becomes visible, because QR pause points are scanned
-     * from an overlay window shown over other apps and Android 14+ only grants
-     * while-in-use camera access while the app itself is visible.
-     */
     private fun ensureCameraForegroundType() {
         if (cameraTypeActive || !foregroundNotificationStarted) return
         serviceScope.launch {
@@ -2669,21 +2682,8 @@ class AppUsageMonitorService : Service() {
         private const val WIND_DOWN_NOTIFICATION_ID = 2006
 
         const val ACTION_ENSURE_CAMERA_FGS = "com.etrisad.zenith.action.ENSURE_CAMERA_FGS"
-
-        /** True while this process holds a live, foreground monitor service. */
         @Volatile
         private var serviceInstanceRunning = false
-
-        /**
-         * Starts the monitor service in the safest way for the caller.
-         *
-         * A plain startService() creates no foreground-service start deadline, so
-         * it can never trigger the system crash "Context.startForegroundService()
-         * did not then call Service.startForeground()" when the main thread is
-         * busy (for example during the first composition right after launch).
-         * Only genuine background starts use startForegroundService(), where the
-         * system demands startForeground() within its deadline.
-         */
         fun startMonitorService(
             context: Context,
             action: String? = null,
@@ -2701,8 +2701,6 @@ class AppUsageMonitorService : Service() {
                     context.startService(intent)
                     return
                 } catch (_: Exception) {
-                    // Background restrictions may still reject startService();
-                    // fall through to startForegroundService().
                 }
             }
             try {
@@ -2710,14 +2708,6 @@ class AppUsageMonitorService : Service() {
             } catch (_: Exception) {
             }
         }
-
-        /**
-         * Asks a running monitor service to (re)attach the camera foreground
-         * service type. Only effective while the app is visible and the QR pause
-         * point is enabled + camera permission granted; otherwise it is a no-op.
-         * Safe to call on every resume: uses startService(), which does not
-         * create a foreground-service start obligation for a running service.
-         */
         fun requestCameraTypeUpgrade(context: Context) {
             try {
                 context.startService(
@@ -2726,7 +2716,6 @@ class AppUsageMonitorService : Service() {
                     }
                 )
             } catch (_: Exception) {
-                // App in background / service not allowed to start: nothing to do.
             }
         }
     }

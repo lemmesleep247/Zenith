@@ -273,10 +273,23 @@ class FocusViewModel(
 
                     installedApps
                         .filter { app ->
-                            val isSystem = (app.flags and ApplicationInfo.FLAG_SYSTEM) != 0
-                            val isWhitelisted = app.packageName in whitelist
-                            if (isWhitelisted) false
-                            else !isSystem
+                            val pkg = app.packageName
+                            val isSystemFlag = (app.flags and (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0
+                            val hasLauncher = pm.getLaunchIntentForPackage(pkg) != null
+                            val isCoreComponent = pkg == "android" ||
+                                    pkg.startsWith("com.android.settings") ||
+                                    pkg.startsWith("com.android.systemui") ||
+                                    pkg.startsWith("com.android.shell") ||
+                                    pkg.startsWith("com.android.phone") ||
+                                    pkg.startsWith("com.android.angle") ||
+                                    pkg.startsWith("com.android.providers") ||
+                                    pkg.startsWith("com.google.android.angle") ||
+                                    pkg.startsWith("com.google.android.setupwizard") ||
+                                    pkg.contains("restore") ||
+                                    pkg.contains("overlay") ||
+                                    pkg.contains("documentsui")
+                            val isCoreSystemApp = isSystemFlag && (!hasLauncher || isCoreComponent)
+                            pkg !in whitelist && !isCoreSystemApp
                         }
                         .filter { it.packageName != context.packageName }
                         .map {
@@ -606,6 +619,8 @@ class FocusViewModel(
         isRemindersEnabled: Boolean = true,
         isStrictModeEnabled: Boolean = false,
         isAutoQuitEnabled: Boolean = false,
+        isEndOverlayEnabled: Boolean = true,
+        isPausePointEnabled: Boolean = true,
         maxUsesPerPeriod: Int = 5,
         refreshPeriodMinutes: Int = 60,
         goalReminderPeriodMinutes: Int = 0,
@@ -647,7 +662,9 @@ class FocusViewModel(
                     maxEmergencyUses = if (type == FocusType.SHIELD) maxEmergencyUses else 0,
                     isRemindersEnabled = isRemindersEnabled,
                     isStrictModeEnabled = if (type == FocusType.SHIELD) isStrictModeEnabled else false,
-                    isAutoQuitEnabled = if (type == FocusType.SHIELD) isAutoQuitEnabled else false,
+                    isAutoQuitEnabled = if (type == FocusType.SHIELD) (isAutoQuitEnabled || !isEndOverlayEnabled) else false,
+                    isEndOverlayEnabled = if (type == FocusType.SHIELD) isEndOverlayEnabled else true,
+                    isPausePointEnabled = if (type == FocusType.SHIELD) isPausePointEnabled else true,
                     remainingTimeMillis = if (periodChanged) timeLimitMinutes * 60 * 1000L else (existing?.remainingTimeMillis ?: (timeLimitMinutes * 60 * 1000L)),
                     lastUsedTimestamp = System.currentTimeMillis(),
                     maxUsesPerPeriod = if (type == FocusType.SHIELD) maxUsesPerPeriod else 0,

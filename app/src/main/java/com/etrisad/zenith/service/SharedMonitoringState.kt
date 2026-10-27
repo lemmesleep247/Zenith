@@ -26,6 +26,11 @@ object SharedMonitoringState {
     @Volatile var whitelistedPackages = emptySet<String>()
     @Volatile var bedtimeWhitelistedPackages = emptySet<String>()
     @Volatile var excludedFromTrackingPackages = emptySet<String>()
+    @Volatile var privatePackages = emptySet<String>()
+    @Volatile var accessibilityLimitedMode = true
+    @Volatile var notificationInterceptionEnabled = false
+    @Volatile var notificationExcludedPackages = emptySet<String>()
+    @Volatile var storeInterceptedNotificationContent = false
     @Volatile var restrictedPackages = emptySet<String>()
     @Volatile var hasGlobalAllowSchedule = false
     @Volatile var launcherAppsCache = emptySet<String>()
@@ -124,12 +129,17 @@ object SharedMonitoringState {
 
     fun isFinancialApp(packageName: String): Boolean =
         packageName in FINANCIAL_APPS
+    fun isPrivatePackage(packageName: String): Boolean =
+        packageName.isNotEmpty() && packageName in privatePackages
+    fun isNotificationExcluded(packageName: String): Boolean =
+        packageName.isNotEmpty() &&
+            (packageName in privatePackages || packageName in notificationExcludedPackages)
 
     fun updateRestrictedPackages() {
         val shieldPkgs = allShieldsCache.keys
         val schedulePkgs = activeSchedules.asSequence().filter { it.mode == ScheduleMode.BLOCK }
             .flatMap { it.packageNames }.toSet()
         hasGlobalAllowSchedule = activeSchedules.any { it.mode == ScheduleMode.ALLOW }
-        restrictedPackages = shieldPkgs + schedulePkgs + BLOCKABLE_SYSTEM_APPS
+        restrictedPackages = (shieldPkgs + schedulePkgs + BLOCKABLE_SYSTEM_APPS) - privatePackages
     }
 }

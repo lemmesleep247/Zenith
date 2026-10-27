@@ -12,12 +12,6 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 private const val MAX_LOG_TAIL_LINES = 400
-
-/**
- * Snapshot of one caught crash. Kept intentionally dumb (no Android
- * dependencies) so it can be unit tested and serialized from inside the
- * uncaught-exception handler without risking another failure.
- */
 data class CrashRecord(
     val timestamp: Long = System.currentTimeMillis(),
     val versionName: String = "",
@@ -78,12 +72,6 @@ data class CrashRecord(
         )
     }
 }
-
-/**
- * File + preference storage for caught crashes. Every public method is
- * defensive: it must never throw while running inside the uncaught-exception
- * handler.
- */
 object CrashStore {
     private const val PREFS_NAME = "zenith_crash"
     private const val KEY_UNSEEN = "unseen_crash"
@@ -94,13 +82,6 @@ object CrashStore {
 
     const val RAPID_WINDOW_MS = 60_000L
     const val RAPID_THRESHOLD = 3
-
-    /**
-     * True when [crashTimes] contains [RAPID_THRESHOLD] or more crashes inside
-     * [RAPID_WINDOW_MS]. Used to stop relaunching the crash screen forever
-     * when the app crashes on startup or on the crash screen itself.
-     * Pure function so it can be unit tested.
-     */
     fun isRapidCrashLoop(crashTimes: List<Long>, now: Long = System.currentTimeMillis()): Boolean =
         crashTimes.count { it <= now && now - it <= RAPID_WINDOW_MS } >= RAPID_THRESHOLD
 
@@ -162,11 +143,6 @@ object CrashStore {
     } catch (_: Throwable) {
         false
     }
-
-    /**
-     * Relative zip path -> text content for the diagnostic export, so a bug
-     * report always carries the last crash plus a bit of history.
-     */
     fun reportEntries(context: Context): List<Pair<String, String>> {
         val entries = mutableListOf<Pair<String, String>>()
         try {

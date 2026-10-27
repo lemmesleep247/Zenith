@@ -15,6 +15,7 @@ import com.etrisad.zenith.data.local.entity.ShieldEntity
 import com.etrisad.zenith.data.local.entity.WebsiteUsageEntity
 import com.etrisad.zenith.data.model.IncentiveTier
 import com.etrisad.zenith.data.preferences.UserPreferencesRepository
+import com.etrisad.zenith.service.SharedMonitoringState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -41,6 +42,30 @@ class ShieldRepository(
 ) {
     val allowedApps = ConcurrentHashMap<String, Long>()
     val mindfulGatewayStates = ConcurrentHashMap<String, ShieldEntity>()
+    fun applyMindfulGatewayDefaults(
+        maxUsesPerPeriod: Int,
+        refreshPeriodMinutes: Int,
+        maxEmergencyUses: Int,
+        isRemindersEnabled: Boolean,
+        isStrictModeEnabled: Boolean,
+        isPausePointEnabled: Boolean,
+        isEndOverlayEnabled: Boolean,
+        isAutoQuitEnabled: Boolean,
+    ) {
+        mindfulGatewayStates.replaceAll { _, shield ->
+            shield.copy(
+                maxUsesPerPeriod = maxUsesPerPeriod,
+                refreshPeriodMinutes = refreshPeriodMinutes,
+                maxEmergencyUses = maxEmergencyUses,
+                emergencyUseCount = shield.emergencyUseCount.coerceAtMost(maxEmergencyUses),
+                isRemindersEnabled = isRemindersEnabled,
+                isStrictModeEnabled = isStrictModeEnabled,
+                isPausePointEnabled = isPausePointEnabled,
+                isEndOverlayEnabled = isEndOverlayEnabled,
+                isAutoQuitEnabled = isAutoQuitEnabled || !isEndOverlayEnabled
+            )
+        }
+    }
 
     private val repositoryScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
@@ -297,6 +322,34 @@ class ShieldRepository(
             shieldDao.updateShield(shield)
         } catch (e: Exception) {
         }
+    }
+    suspend fun purgePrivateAppData(packages: Set<String>) {
+        if (packages.isEmpty()) return
+        val packageList = packages.toList()
+        dailyUsageDao.deleteByPackages(packageList)
+        hourlyUsageDao.deleteByPackages(packageList)
+        database.interceptedNotificationDao().deleteByPackages(packageList)
+        packages.forEach { pkg ->
+            shieldDao.getShieldByPackageName(pkg)?.let { shieldDao.deleteShield(it) }
+            allowedApps.remove(pkg)
+            SharedMonitoringState.lastKnownPackageUsage.remove(pkg)
+            SharedMonitoringState.dailyUsageCache.remove(pkg)
+            SharedMonitoringState.notifiedGoals.remove(pkg)
+            SharedMonitoringState.windDownUsedPackages.remove(pkg)
+        }
+        _allShieldsCache.value = _allShieldsCache.value.filterNot { it.packageName in packages }
+        SharedMonitoringState.allShieldsCache = SharedMonitoringState.allShieldsCache
+            .filterKeys { it !in packages }
+        SharedMonitoringState.goalShieldsCache =
+            SharedMonitoringState.goalShieldsCache.filterNot { it.packageName in packages }
+        SharedMonitoringState.updateRestrictedPackages()
+    }
+    suspend fun purgeNotificationData(packages: Set<String>) {
+        if (packages.isEmpty()) return
+        database.interceptedNotificationDao().deleteByPackages(packages.toList())
+    }
+    suspend fun scrubInterceptedNotificationContent() {
+        database.interceptedNotificationDao().clearStoredContent()
     }
 
     suspend fun resetAllRemainingTimes() {

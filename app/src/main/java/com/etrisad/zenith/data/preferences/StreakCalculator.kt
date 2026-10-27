@@ -92,24 +92,8 @@ class StreakCalculator(
         } catch (_: Exception) {
             return todayStr
         }
-        // Clamp future-dated anchors (clock changes, restore anomalies).
         return if (s > todayStr) todayStr else s
     }
-
-    /**
-     * Resolves verified usage of one app for one past day.
-     * Returns null when there is NO trustworthy evidence either way:
-     * - no Zenith row for the package that day, AND
-     * - no TOTAL row proving the tracker even ran that day, AND
-     * - (optionally) no OS entry for the package.
-     * Callers must treat null as "unknown" and stop the streak run, a missing
-     * row alone is not proof of zero usage (fresh install, permission gap,
-     * pruned DB), and assuming success is exactly what fabricated streaks.
-     * The one safe inference: when the tracker provably ran (TOTAL row
-     * exists) but recorded nothing for this package, SHIELD usage was 0.
-     * For GOAL the same 0 is returned and the type comparison fails it, since
-     * a goal needs affirmative usage to count.
-     */
     private suspend fun resolvePastDayUsage(
         pkg: String,
         dStr: String,
@@ -128,12 +112,6 @@ class StreakCalculator(
             fetchSystemAppUsageForDate(usm, pkg, dayStartMillis)
         }
     }
-
-    /**
-     * Resolves a verified week total for weekly shields, or null when any day
-     * of the week is unknown (see [resolvePastDayUsage]). A partially unknown
-     * week must break the run instead of being counted as a success week.
-     */
     private suspend fun resolvePastWeekUsage(
         pkg: String,
         weekStartMillis: Long,
@@ -158,8 +136,6 @@ class StreakCalculator(
         }
         return total
     }
-
-    /** Max daily streak physically possible: active days in [creation, today]. */
     private fun maxPossibleDailyStreak(
         creationStr: String,
         todayStr: String,
@@ -181,8 +157,6 @@ class StreakCalculator(
             0
         }
     }
-
-    /** Max weekly streak physically possible: week-starts in [creation, today]. */
     private fun maxPossibleWeeklyStreak(
         creationStr: String,
         todayStr: String,
@@ -219,13 +193,9 @@ class StreakCalculator(
         }
 
         shieldRepository.isShieldsLoaded.first { it }
-        // Wide enough that TOTAL coverage, not the query cap, decides how far
-        // back a streak can be verified (~400 days of TOTAL rows).
         val dbUsage = shieldRepository.getAllUsage(10000).first()
         val usageStatsManager = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
         val now = System.currentTimeMillis()
-        // DB date keys are locale-independent; getDefault() can emit non-Latin
-        // digits on some locales and silently break Room date matching.
         val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
 
         val (launcherApps, launcherPackage) = withContext(Dispatchers.IO) {
@@ -237,7 +207,7 @@ class StreakCalculator(
             } catch (_: Exception) { emptySet<String>() to null }
         }
 
-        val excludePackages = setOfNotNull(context.packageName, launcherPackage) + prefs.excludedFromTrackingPackages
+        val excludePackages = setOfNotNull(context.packageName, launcherPackage) + prefs.excludedFromTrackingPackages + prefs.privatePackages
 
         val todayStart = DateTimeUtils.getDayStartTime(now, prefs.dayStartHour, prefs.dayStartMinute)
 
@@ -254,13 +224,6 @@ class StreakCalculator(
         val globalHistoryMap = globalHistory.associate { it.date to it.usageTimeMillis }
         val oldestHistoryDate = globalHistory.map { it.date }.minOrNull()
         val todayStr = dateFormat.format(Date(todayStart))
-
-        // Pure recompute from verified history: every past day needs a TOTAL
-        // row (tracker ran) or an OS entry within the 14-day retention window.
-        // Unknown days STOP the run, they are never assumed to be successes.
-        // This also makes the streak self-healing: a previously inflated value
-        // is corrected downward on the next refresh instead of being ratcheted
-        // upward forever by max(stored).
         var pastStreak = 0
         val c = Calendar.getInstance()
         val globalStreakLoopLimit = 730
@@ -285,16 +248,10 @@ class StreakCalculator(
 
         val isSuccessToday = totalToday <= targetMillis
         val liveStreak = if (isSuccessToday) pastStreak + 1 else 0
-
-        // Best is recomputed from 0 over verified history so an inflated best
-        // heals itself. Unknown days reset the running best-run (they cannot
-        // prove an unbroken run) but do not abort the whole scan.
         var bestStreak = 0
         var tempStreak = 0
         val startDateStr = oldestHistoryDate ?: todayStr
         try {
-            // Walk back from today so every day carries its day-start millis
-            // for the OS fallback window.
             val days = ArrayDeque<Pair<String, Long>>()
             val back = Calendar.getInstance()
             back.timeInMillis = todayStart
@@ -357,8 +314,6 @@ class StreakCalculator(
         shields.forEach { shield ->
             val pkg = shield.packageName
             val history = usageByPackage[pkg] ?: emptyMap()
-            // Absolute creation bound (never null): days before the shield
-            // existed can never count, regardless of DB/OS history.
             val creationStr = creationDateStr(shield.timeAdded, shield.lastStreakUpdateTimestamp, dateFormat, todayStr)
             val limitMillis = shield.timeLimitMinutes * 60 * 1000L
             val isWeekly = shield.limitPeriod == LimitPeriod.WEEKLY
@@ -374,11 +329,6 @@ class StreakCalculator(
             } else {
                 dailyTodayUsage
             }
-
-            // Pure recompute from verified history: unknown days stop the run,
-            // they are never assumed to be successes. Streaks are idempotent
-            // (re-running refresh changes nothing) and self-healing (an
-            // inflated stored value is corrected downward).
             var pastStreak = 0
             val todayCal = Calendar.getInstance()
             todayCal.timeInMillis = todayStart
@@ -436,9 +386,6 @@ class StreakCalculator(
                     set(Calendar.DAY_OF_WEEK, Calendar.MONDAY)
                     set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
                 }.timeInMillis
-
-                // No max(stored) ratchet: current is purely past + today, so an
-                // inflated value corrects itself on the next refresh.
                 val rawCurrent = if (!isTodayActive) {
                     pastStreak
                 } else if (shield.type == FocusType.GOAL) {
@@ -449,9 +396,6 @@ class StreakCalculator(
                 val currentStreak = rawCurrent.coerceAtMost(
                     maxPossibleWeeklyStreak(creationStr, todayStr, dateFormat)
                 )
-
-                // Recompute best from bounded history starting at 0 (not from the
-                // stored value) so a previously inflated best self-heals.
                 var bestStreak = 0
                 var tempStreak = 0
                 try {
@@ -486,7 +430,6 @@ class StreakCalculator(
                                 tempStreak = 0
                             }
                         } else {
-                            // Unknown week cannot prove an unbroken run.
                             tempStreak = 0
                         }
                         bestWeekCal.add(Calendar.DAY_OF_YEAR, 7)
@@ -500,7 +443,6 @@ class StreakCalculator(
                     lastStreakUpdateTimestamp = if (isTodayActive && isSuccessToday) now else shield.lastStreakUpdateTimestamp
                 ))
             } else {
-                // Pure recompute: no continuity ratchet on the stored value.
                 val rawCurrent = if (!isTodayActive) {
                     pastStreak
                 } else if (shield.type == FocusType.GOAL) {
@@ -511,9 +453,6 @@ class StreakCalculator(
                 val currentStreak = rawCurrent.coerceAtMost(
                     maxPossibleDailyStreak(creationStr, todayStr, shield.activeDays, dateFormat)
                 )
-
-                // Best recomputed from 0 over verified evidence so an inflated
-                // best self-heals. Unknown days reset the running best-run.
                 var bestStreak = 0
                 var tempStreak = 0
                 val calendarForBest = Calendar.getInstance()
@@ -580,7 +519,6 @@ class StreakCalculator(
         shields.forEach { shield ->
             val pkg = shield.packageName
             val history = usageByPackage[pkg] ?: emptyMap()
-            // Absolute creation bound (never null, never future).
             val creationStr = creationDateStr(shield.timeAdded, shield.lastStreakUpdateTimestamp, dateFormat, todayStr)
             val limitMillis = shield.timeLimitMinutes * 60 * 1000L
             val isWeekly = shield.limitPeriod == LimitPeriod.WEEKLY
@@ -589,9 +527,6 @@ class StreakCalculator(
                 shieldRepository.updateShield(shield.copy(currentStreak = 0, bestStreak = 0))
                 return@forEach
             }
-
-            // Website past-day evidence lives in the website_usage table, so
-            // preload it once per shield instead of querying per day.
             val domain = WebsiteRepository.extractDomainFromPackageName(pkg)
             val webHistory = try {
                 shieldRepository.getWebsiteUsageForDomain(domain).first()
@@ -599,9 +534,6 @@ class StreakCalculator(
             } catch (_: Exception) {
                 emptyMap()
             }
-
-            // Website rows are keyed by wall-clock date while streak days use
-            // the day-start boundary, so check both keys for today.
             val wallClockTodayStr = dateFormat.format(Date(now))
             val dailyTodayUsage = webHistory[todayStr]
                 ?: webHistory[wallClockTodayStr]
@@ -662,7 +594,6 @@ class StreakCalculator(
             val isSuccessToday = if (!isTodayActive) {
                 false
             } else if (creationStr == todayStr && todayUsage == 0L) {
-                // Creation day with no visit yet: not a success, not a failure.
                 false
             } else if (shield.type == FocusType.GOAL) todayUsage >= limitMillis else todayUsage <= limitMillis
 
@@ -684,10 +615,6 @@ class StreakCalculator(
                 val currentStreak = rawCurrent.coerceAtMost(
                     maxPossibleWeeklyStreak(creationStr, todayStr, dateFormat)
                 )
-
-                // Best recomputed from 0 over verified evidence (previously it
-                // started from the stored value, so an inflated best could
-                // never heal).
                 var bestStreak = 0
                 var tempStreak = 0
                 try {
@@ -795,14 +722,6 @@ class StreakCalculator(
         refreshAppStreaks(shieldRepository)
         refreshWebStreaks(shieldRepository)
     }
-
-    /**
-     * Manual "verify and restore" action from developer settings. This now
-     * simply forces the same pure recompute as the automatic refresh: every
-     * value written is backed by verified evidence (DB rows within the shield
-     * lifetime, or OS entries inside the retention window), so running it can
-     * never fabricate a streak, it only re-verifies and heals the state.
-     */
     suspend fun runManualStreakRecovery(shieldRepository: ShieldRepository) {
         refreshGlobalStreak(shieldRepository)
         refreshAllAppStreaks(shieldRepository)
