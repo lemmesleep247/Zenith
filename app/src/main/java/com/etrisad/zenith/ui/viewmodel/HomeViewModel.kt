@@ -433,6 +433,7 @@ class HomeViewModel(
         .map { it }
         .distinctUntilChanged { old, new ->
             old.screenTimeTargetMinutes == new.screenTimeTargetMinutes &&
+                    old.homeQuickActions == new.homeQuickActions &&
                     old.showDatabaseIndicator == new.showDatabaseIndicator &&
                     old.expressiveColors == new.expressiveColors &&
                     old.bedtimeEnabled == new.bedtimeEnabled &&
@@ -689,13 +690,20 @@ class HomeViewModel(
     fun onRefresh() {
         shieldOperationsManager.triggerServiceRefresh()
         viewModelScope.launch {
-            userPreferencesRepository.refreshAppStreaks(shieldRepository)
-            userPreferencesRepository.refreshWebStreaks(shieldRepository)
-            val prefs = userPreferencesRepository.userPreferencesFlow.first()
-            if (prefs.smartRepairOnRefresh) {
-                resetCarryover()
-            } else {
-                syncDataNow()
+            try {
+                userPreferencesRepository.refreshAppStreaks(shieldRepository)
+                userPreferencesRepository.refreshWebStreaks(shieldRepository)
+                val prefs = userPreferencesRepository.userPreferencesFlow.first()
+                if (prefs.smartRepairOnRefresh) {
+                    resetCarryover()
+                } else {
+                    syncDataNow()
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                DbLogBuffer.e("ZenithDB", "REFRESH_SWIPE_FAILED: ${e::class.simpleName}: ${e.message}")
+                _uiState.update { it.copy(isLoading = false) }
             }
         }
     }

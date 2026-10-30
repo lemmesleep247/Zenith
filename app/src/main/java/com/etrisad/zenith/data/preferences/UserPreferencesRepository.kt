@@ -323,10 +323,22 @@ val ACHIEVEMENT_BANNERS_SEEN = stringPreferencesKey("achievement_banners_seen")
         val MINDFUL_GATEWAY_PAUSE_POINT_ENABLED = booleanPreferencesKey("mindful_gateway_pause_point_enabled")
         val MINDFUL_GATEWAY_END_OVERLAY_ENABLED = booleanPreferencesKey("mindful_gateway_end_overlay_enabled")
         val MINDFUL_GATEWAY_AUTO_QUIT_ENABLED = booleanPreferencesKey("mindful_gateway_auto_quit_enabled")
+        val REELS_SHIELD_ENABLED = booleanPreferencesKey("reels_shield_enabled")
+        val REELS_SHIELD_DAILY_LIMIT = intPreferencesKey("reels_shield_daily_limit")
+        val REELS_SHIELD_PACKAGES = stringPreferencesKey("reels_shield_packages")
+        val REELS_SHIELD_TODAY_DATE = stringPreferencesKey("reels_shield_today_date")
+        val REELS_SHIELD_TODAY_COUNT = intPreferencesKey("reels_shield_today_count")
+        val REELS_SHIELD_TODAY_BY_APP = stringPreferencesKey("reels_shield_today_by_app")
+        val REELS_SHIELD_TOTAL_COUNT = longPreferencesKey("reels_shield_total_count")
+        val REELS_SHIELD_HISTORY = stringPreferencesKey("reels_shield_history")
+        val REELS_SHIELD_HISTORY_BY_APP = stringPreferencesKey("reels_shield_history_by_app")
+        val REELS_SHIELD_APP_LIMITS = stringPreferencesKey("reels_shield_app_limits")
+        val HOME_QUICK_ACTIONS = stringPreferencesKey("home_quick_actions")
         val REFRESH_ON_OPEN_USAGE_STATS = booleanPreferencesKey("refresh_on_open_usage_stats")
         val CHECK_UPDATE_ON_START = booleanPreferencesKey("check_update_on_start")
         val BATTERY_STATS_RESET_ENABLED = booleanPreferencesKey("battery_stats_reset_enabled")
         val BANKING_WARNING_DISMISSED = booleanPreferencesKey("banking_warning_dismissed")
+        val INTERCEPT_WARNING_DISMISSED = booleanPreferencesKey("intercept_warning_dismissed")
         val SHOW_CURRENT_EVENT = booleanPreferencesKey("show_current_event")
         val DAILY_RECAP_ENABLED = booleanPreferencesKey("daily_recap_enabled")
         val WEEKLY_INSIGHT_ENABLED = booleanPreferencesKey("weekly_insight_enabled")
@@ -338,6 +350,7 @@ val ACHIEVEMENT_BANNERS_SEEN = stringPreferencesKey("achievement_banners_seen")
         val USAGE_GLIMPSE_ENABLED = booleanPreferencesKey("usage_glimpse_enabled")
         val WEBSITE_AUTO_TRACKING = booleanPreferencesKey("website_auto_tracking")
         val LAST_BANKING_APPS_COUNT = intPreferencesKey("last_banking_apps_count")
+        val ACCESSIBILITY_ACTIVE_NOTIFICATION_ENABLED = booleanPreferencesKey("accessibility_active_notification_enabled")
 
         val OVERLAY_PALETTE_ID = stringPreferencesKey("overlay_palette_id")
         val OVERLAY_SHEET_OPACITY = floatPreferencesKey("overlay_sheet_opacity")
@@ -581,10 +594,38 @@ achievementBannersSeen = settings[PreferencesKeys.ACHIEVEMENT_BANNERS_SEEN] ?: "
             mindfulGatewayPausePointEnabled = settings[PreferencesKeys.MINDFUL_GATEWAY_PAUSE_POINT_ENABLED] ?: MindfulGatewayDefaults.PAUSE_POINT_ENABLED,
             mindfulGatewayEndOverlayEnabled = settings[PreferencesKeys.MINDFUL_GATEWAY_END_OVERLAY_ENABLED] ?: MindfulGatewayDefaults.END_OVERLAY_ENABLED,
             mindfulGatewayAutoQuitEnabled = settings[PreferencesKeys.MINDFUL_GATEWAY_AUTO_QUIT_ENABLED] ?: MindfulGatewayDefaults.AUTO_QUIT_ENABLED,
+            reelsShieldEnabled = settings[PreferencesKeys.REELS_SHIELD_ENABLED] ?: false,
+            reelsShieldDailyLimit = settings[PreferencesKeys.REELS_SHIELD_DAILY_LIMIT] ?: ReelsShieldDefaults.DAILY_LIMIT,
+            reelsShieldPackages = settings[PreferencesKeys.REELS_SHIELD_PACKAGES]
+                ?.split(",")
+                ?.filter { it in ReelsShieldDefaults.SUPPORTED_PACKAGES }
+                ?.toSet()
+                ?: ReelsShieldDefaults.PACKAGES,
+            reelsShieldTodayDate = settings[PreferencesKeys.REELS_SHIELD_TODAY_DATE] ?: "",
+            reelsShieldTodayCount = settings[PreferencesKeys.REELS_SHIELD_TODAY_COUNT] ?: 0,
+            reelsShieldTodayByApp = settings[PreferencesKeys.REELS_SHIELD_TODAY_BY_APP]?.let { parseCountMap(it) } ?: emptyMap(),
+            reelsShieldTotalCount = settings[PreferencesKeys.REELS_SHIELD_TOTAL_COUNT] ?: 0L,
+            reelsShieldHistory = settings[PreferencesKeys.REELS_SHIELD_HISTORY]?.let { parseCountMap(it) } ?: emptyMap(),
+            reelsShieldHistoryByApp = settings[PreferencesKeys.REELS_SHIELD_HISTORY_BY_APP]
+                ?.let { parseHistoryByAppMap(it) }
+                ?: emptyMap(),
+            reelsShieldAppLimits = settings[PreferencesKeys.REELS_SHIELD_APP_LIMITS]
+                ?.let { parseCountMap(it) }
+                ?.filterKeys { it in ReelsShieldDefaults.SUPPORTED_PACKAGES }
+                ?.filterValues { it > 0 }
+                ?: emptyMap(),
+            homeQuickActions = settings[PreferencesKeys.HOME_QUICK_ACTIONS]
+                ?.split(",")
+                ?.filter { it in HomeQuickActionsDefaults.ALL_IDS }
+                ?.distinct()
+                ?.take(HomeQuickActionsDefaults.MAX)
+                ?.takeIf { it.size >= HomeQuickActionsDefaults.MIN }
+                ?: HomeQuickActionsDefaults.DEFAULT_ORDER,
             refreshOnOpenUsageStats = settings[PreferencesKeys.REFRESH_ON_OPEN_USAGE_STATS] ?: false,
             checkUpdateOnStart = settings[PreferencesKeys.CHECK_UPDATE_ON_START] ?: false,
             batteryStatsResetEnabled = settings[PreferencesKeys.BATTERY_STATS_RESET_ENABLED] ?: false,
             bankingWarningDismissed = settings[PreferencesKeys.BANKING_WARNING_DISMISSED] ?: false,
+            interceptWarningDismissed = settings[PreferencesKeys.INTERCEPT_WARNING_DISMISSED] ?: false,
             showCurrentEvent = settings[PreferencesKeys.SHOW_CURRENT_EVENT] ?: false,
             dailyRecapEnabled = settings[PreferencesKeys.DAILY_RECAP_ENABLED] ?: true,
             weeklyInsightEnabled = settings[PreferencesKeys.WEEKLY_INSIGHT_ENABLED] ?: true,
@@ -598,6 +639,7 @@ achievementBannersSeen = settings[PreferencesKeys.ACHIEVEMENT_BANNERS_SEEN] ?: "
             usageGlimpseEnabled = settings[PreferencesKeys.USAGE_GLIMPSE_ENABLED] ?: false,
             websiteAutoTrackingEnabled = settings[PreferencesKeys.WEBSITE_AUTO_TRACKING] ?: false,
             lastBankingAppsCount = settings[PreferencesKeys.LAST_BANKING_APPS_COUNT] ?: -1,
+            accessibilityActiveNotificationEnabled = settings[PreferencesKeys.ACCESSIBILITY_ACTIVE_NOTIFICATION_ENABLED] ?: true,
             incentiveLockDisableRequestTimestamp = runtime[RuntimeKeys.INCENTIVE_LOCK_DISABLE_REQUEST_TIMESTAMP] ?: 0L,
             incentiveLockGoalsMetToday = if (runtime[RuntimeKeys.INCENTIVE_LOCK_GOALS_MET_TODAY] != true) false
                 else runtime[RuntimeKeys.INCENTIVE_LOCK_GOALS_MET_DATE] == SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date()),
@@ -1581,6 +1623,87 @@ achievementBannersSeen = settings[PreferencesKeys.ACHIEVEMENT_BANNERS_SEEN] ?: "
         }
     }
 
+    suspend fun setReelsShieldEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences -> preferences[PreferencesKeys.REELS_SHIELD_ENABLED] = enabled }
+    }
+
+    suspend fun setReelsShieldDailyLimit(limit: Int) {
+        val safeLimit = limit.coerceIn(0, MAX_REELS_SHIELD_DAILY_LIMIT)
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.REELS_SHIELD_DAILY_LIMIT] = safeLimit
+            val limits = preferences[PreferencesKeys.REELS_SHIELD_APP_LIMITS]
+                ?.let { parseCountMap(it) }
+                .orEmpty()
+                .filterKeys { it in ReelsShieldDefaults.SUPPORTED_PACKAGES }
+            if (limits.isNotEmpty() && safeLimit > 0) {
+                val tightened = limits
+                    .mapValues { (_, value) -> value.coerceIn(1, safeLimit) }
+                    .filterValues { it < safeLimit }
+                if (tightened.isEmpty()) {
+                    preferences.remove(PreferencesKeys.REELS_SHIELD_APP_LIMITS)
+                } else {
+                    preferences[PreferencesKeys.REELS_SHIELD_APP_LIMITS] = encodeCountMap(tightened)
+                }
+            }
+        }
+    }
+
+    suspend fun setReelsShieldPackages(packages: Set<String>) {
+        val supported = packages.filterTo(LinkedHashSet()) { it in ReelsShieldDefaults.SUPPORTED_PACKAGES }
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.REELS_SHIELD_PACKAGES] = supported.joinToString(",")
+        }
+    }
+    suspend fun setReelsShieldAppLimit(packageName: String, limit: Int) {
+        if (packageName !in ReelsShieldDefaults.SUPPORTED_PACKAGES) return
+        context.dataStore.edit { preferences ->
+            val pool = (preferences[PreferencesKeys.REELS_SHIELD_DAILY_LIMIT]
+                ?: ReelsShieldDefaults.DAILY_LIMIT)
+                .coerceIn(1, MAX_REELS_SHIELD_DAILY_LIMIT)
+            val limits = preferences[PreferencesKeys.REELS_SHIELD_APP_LIMITS]
+                ?.let { parseCountMap(it) }
+                .orEmpty()
+                .filterKeys { it in ReelsShieldDefaults.SUPPORTED_PACKAGES }
+            val safeLimit = limit.coerceIn(1, pool)
+            val updated = if (safeLimit >= pool) {
+                limits - packageName
+            } else {
+                limits + (packageName to safeLimit)
+            }
+            if (updated.isEmpty()) {
+                preferences.remove(PreferencesKeys.REELS_SHIELD_APP_LIMITS)
+            } else {
+                preferences[PreferencesKeys.REELS_SHIELD_APP_LIMITS] = encodeCountMap(updated)
+            }
+        }
+    }
+    suspend fun setHomeQuickActions(actions: List<String>) {
+        val sanitized = actions.filter { it in HomeQuickActionsDefaults.ALL_IDS }
+            .distinct()
+            .take(HomeQuickActionsDefaults.MAX)
+        if (sanitized.isEmpty()) return
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.HOME_QUICK_ACTIONS] = sanitized.joinToString(",")
+        }
+    }
+    suspend fun setReelsShieldCounters(
+        todayDate: String,
+        todayCount: Int,
+        todayByApp: Map<String, Int>,
+        totalCount: Long,
+        history: Map<String, Int>,
+        historyByApp: Map<String, Map<String, Int>> = emptyMap()
+    ) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.REELS_SHIELD_TODAY_DATE] = todayDate
+            preferences[PreferencesKeys.REELS_SHIELD_TODAY_COUNT] = todayCount.coerceAtLeast(0)
+            preferences[PreferencesKeys.REELS_SHIELD_TODAY_BY_APP] = todayByApp.entries.joinToString(",") { "${it.key}:${it.value}" }
+            preferences[PreferencesKeys.REELS_SHIELD_TOTAL_COUNT] = totalCount.coerceAtLeast(0L)
+            preferences[PreferencesKeys.REELS_SHIELD_HISTORY] = history.entries.joinToString(",") { "${it.key}:${it.value}" }
+            preferences[PreferencesKeys.REELS_SHIELD_HISTORY_BY_APP] = encodeHistoryByAppMap(historyByApp)
+        }
+    }
+
     suspend fun setRefreshOnOpenUsageStats(enabled: Boolean) {
         context.dataStore.edit { preferences -> preferences[PreferencesKeys.REFRESH_ON_OPEN_USAGE_STATS] = enabled }
     }
@@ -1597,8 +1720,16 @@ achievementBannersSeen = settings[PreferencesKeys.ACHIEVEMENT_BANNERS_SEEN] ?: "
         context.dataStore.edit { preferences -> preferences[PreferencesKeys.BANKING_WARNING_DISMISSED] = dismissed }
     }
 
+    suspend fun setInterceptWarningDismissed(dismissed: Boolean) {
+        context.dataStore.edit { preferences -> preferences[PreferencesKeys.INTERCEPT_WARNING_DISMISSED] = dismissed }
+    }
+
     suspend fun setLastBankingAppsCount(count: Int) {
         context.dataStore.edit { preferences -> preferences[PreferencesKeys.LAST_BANKING_APPS_COUNT] = count }
+    }
+
+    suspend fun setAccessibilityActiveNotificationEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences -> preferences[PreferencesKeys.ACCESSIBILITY_ACTIVE_NOTIFICATION_ENABLED] = enabled }
     }
 
     suspend fun setShowCurrentEvent(enabled: Boolean) {
@@ -1975,6 +2106,118 @@ achievementBannersSeen = settings[PreferencesKeys.ACHIEVEMENT_BANNERS_SEEN] ?: "
 
 
 }
+const val MAX_REELS_SHIELD_DAILY_LIMIT = 200
+
+object ReelsShieldDefaults {
+    const val DAILY_LIMIT = 30
+
+    val PACKAGES: Set<String> = setOf(
+        "com.instagram.android",
+        "com.facebook.katana",
+        "com.facebook.lite",
+        "com.google.android.youtube",
+        "com.snapchat.android",
+        "com.zhiliaoapp.musically",
+        "com.zhiliaoapp.musically.go",
+        "com.ss.android.ugc.trill",
+        "com.ss.android.ugc.aweme"
+    )
+
+    val PRIORITY_PACKAGES: Set<String> = setOf(
+        "com.instagram.android",
+        "com.facebook.katana",
+        "com.facebook.lite"
+    )
+
+    val FULLY_SUPPORTED_PACKAGES: Set<String> = setOf(
+        "com.instagram.android",
+        "com.google.android.youtube"
+    )
+
+    val PARTIAL_PACKAGES: Set<String> = setOf(
+        "com.facebook.lite",
+        "com.zhiliaoapp.musically",
+        "com.zhiliaoapp.musically.go",
+        "com.ss.android.ugc.trill",
+        "com.ss.android.ugc.aweme"
+    )
+
+    val UNTESTED_PACKAGES: Set<String> = setOf(
+        "com.facebook.katana",
+        "com.snapchat.android"
+    )
+
+    val SUPPORTED_PACKAGES: Set<String> = PACKAGES
+
+    fun isFullySupported(pkg: String): Boolean = pkg in FULLY_SUPPORTED_PACKAGES
+
+    fun isPartial(pkg: String): Boolean = pkg in PARTIAL_PACKAGES
+
+    fun isUntested(pkg: String): Boolean = !isFullySupported(pkg) && !isPartial(pkg)
+
+    val SHORT_VIDEO_ONLY_PACKAGES: Set<String> = setOf(
+        "com.zhiliaoapp.musically",
+        "com.zhiliaoapp.musically.go",
+        "com.ss.android.ugc.trill",
+        "com.ss.android.ugc.aweme"
+    )
+
+    fun fallbackLabel(pkg: String): String = when (pkg) {
+        "com.instagram.android" -> "Instagram"
+        "com.google.android.youtube" -> "YouTube"
+        "com.facebook.katana", "com.facebook.lite" -> "Facebook"
+        "com.snapchat.android" -> "Snapchat"
+        "com.zhiliaoapp.musically", "com.zhiliaoapp.musically.go",
+        "com.ss.android.ugc.trill", "com.ss.android.ugc.aweme" -> "TikTok"
+        else -> pkg.substringAfterLast('.')
+    }
+}
+
+object HomeQuickActionsDefaults {
+    const val MIN = 1
+    const val MAX = 4
+
+    val DEFAULT_ORDER: List<String> = listOf("alarm", "pomodoro", "stats", "bedtime")
+
+    val ALL_IDS: List<String> = DEFAULT_ORDER + listOf(
+        "reels_shield",
+        "focus",
+        "settings",
+        "eye_care",
+        "grace_period",
+        "lockdown",
+        "pause_point"
+    )
+}
+
+private fun parseCountMap(raw: String): Map<String, Int> {
+    if (raw.isEmpty()) return emptyMap()
+    return raw.split(",").mapNotNull { entry ->
+        val separator = entry.lastIndexOf(':')
+        if (separator <= 0) null
+        else entry.substring(0, separator) to (entry.substring(separator + 1).toIntOrNull() ?: 0)
+    }.toMap()
+}
+
+private fun encodeCountMap(map: Map<String, Int>): String =
+    map.entries.joinToString(",") { "${it.key}:${it.value}" }
+
+private fun parseHistoryByAppMap(raw: String): Map<String, Map<String, Int>> {
+    if (raw.isEmpty()) return emptyMap()
+    return raw.split(",").mapNotNull { entry ->
+        val separator = entry.indexOf('|')
+        if (separator <= 0) return@mapNotNull null
+        val date = entry.substring(0, separator)
+        val apps = parseCountMap(entry.substring(separator + 1).replace(';', ','))
+        if (apps.isEmpty()) null else date to apps
+    }.toMap()
+}
+
+private fun encodeHistoryByAppMap(map: Map<String, Map<String, Int>>): String =
+    map.entries.joinToString(",") { (date, apps) ->
+        "$date|" + apps.entries.joinToString(";") { "${it.key}:${it.value}" }
+    }
+
 object MindfulGatewayDefaults {
     const val MAX_USES_PER_PERIOD = 5
     const val REFRESH_PERIOD_MINUTES = 60
@@ -2081,6 +2324,17 @@ data class UserPreferences(
     val mindfulGatewayPausePointEnabled: Boolean = MindfulGatewayDefaults.PAUSE_POINT_ENABLED,
     val mindfulGatewayEndOverlayEnabled: Boolean = MindfulGatewayDefaults.END_OVERLAY_ENABLED,
     val mindfulGatewayAutoQuitEnabled: Boolean = MindfulGatewayDefaults.AUTO_QUIT_ENABLED,
+    val reelsShieldEnabled: Boolean = false,
+    val reelsShieldDailyLimit: Int = ReelsShieldDefaults.DAILY_LIMIT,
+    val reelsShieldPackages: Set<String> = ReelsShieldDefaults.PACKAGES,
+    val reelsShieldTodayDate: String = "",
+    val reelsShieldTodayCount: Int = 0,
+    val reelsShieldTodayByApp: Map<String, Int> = emptyMap(),
+    val reelsShieldTotalCount: Long = 0L,
+    val reelsShieldHistory: Map<String, Int> = emptyMap(),
+    val reelsShieldHistoryByApp: Map<String, Map<String, Int>> = emptyMap(),
+    val reelsShieldAppLimits: Map<String, Int> = emptyMap(),
+    val homeQuickActions: List<String> = HomeQuickActionsDefaults.DEFAULT_ORDER,
     val refreshOnOpenUsageStats: Boolean = false,
     val checkUpdateOnStart: Boolean = false,
     val batteryStatsResetEnabled: Boolean = false,
@@ -2152,6 +2406,7 @@ data class UserPreferences(
     val incentiveLockGoalsMetToday: Boolean = false,
     val incentiveBonusUsesUsed: Int = 0,
     val bankingWarningDismissed: Boolean = false,
+    val interceptWarningDismissed: Boolean = false,
     val eyeCareEnabled: Boolean = false,
     val eyeCareWorkMinutes: Int = 20,
     val eyeCareRestSeconds: Int = 20,
@@ -2160,6 +2415,7 @@ data class UserPreferences(
     val usageGlimpseEnabled: Boolean = false,
     val websiteAutoTrackingEnabled: Boolean = false,
     val lastBankingAppsCount: Int = -1,
+    val accessibilityActiveNotificationEnabled: Boolean = true,
     val overlayPaletteId: String = "dynamic",
     val overlaySheetOpacity: Float = 1f,
     val overlayFullScreen: Boolean = false,

@@ -26,6 +26,7 @@ import com.etrisad.zenith.data.preferences.UserPreferencesRepository
 import com.etrisad.zenith.data.repository.ShieldRepository
 import com.etrisad.zenith.data.website.WebsiteRepository
 import com.etrisad.zenith.data.website.WebsiteStateHolder
+import com.etrisad.zenith.ui.components.overlay.ReelsShieldOverlayManager
 import com.etrisad.zenith.ui.components.overlay.SessionUsageOverlayManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
@@ -45,11 +46,23 @@ class ZenithService : AccessibilityService() {
     private lateinit var shieldRepository: ShieldRepository
     private lateinit var preferencesRepository: UserPreferencesRepository
     private lateinit var overlayManager: InterceptOverlayManager
+    private lateinit var reelsShieldOverlay: ReelsShieldOverlayManager
+    private lateinit var reelsShield: ReelsShieldController
     private lateinit var sessionUsageOverlayManager: SessionUsageOverlayManager
     private lateinit var overlayActionHandler: OverlayActionHandler
     private val usageStatsManager by lazy { getSystemService(USAGE_STATS_SERVICE) as UsageStatsManager }
     private val notificationManager by lazy { getSystemService(NotificationManager::class.java) }
     private val reusableCalendar = Calendar.getInstance()
+    private val ownActivityClasses: Set<String> by lazy {
+        try {
+            packageManager.getPackageInfo(
+                packageName,
+                android.content.pm.PackageManager.GET_ACTIVITIES
+            ).activities?.mapNotNull { it.name }?.toSet().orEmpty()
+        } catch (_: Exception) {
+            emptySet()
+        }
+    }
 
     private var lastForegroundApp: String? = null
     @Volatile
@@ -195,6 +208,8 @@ class ZenithService : AccessibilityService() {
         preferencesRepository = app.userPreferencesRepository
         overlayManager = InterceptOverlayManager(this, preferencesRepository)
         sessionUsageOverlayManager = SessionUsageOverlayManager(this, preferencesRepository)
+        reelsShieldOverlay = ReelsShieldOverlayManager(this)
+        reelsShield = ReelsShieldController(this, preferencesRepository, reelsShieldOverlay)
         overlayActionHandler = OverlayActionHandler(
             shieldRepository = shieldRepository,
             overlayManager = overlayManager,
@@ -267,6 +282,8 @@ class ZenithService : AccessibilityService() {
                 SharedMonitoringState.notificationInterceptionEnabled = preferences.notificationInterceptionEnabled
                 SharedMonitoringState.notificationExcludedPackages = preferences.notificationExcludedPackages
                 SharedMonitoringState.storeInterceptedNotificationContent = preferences.storeInterceptedNotificationContent
+                reelsTrackingWanted = preferences.reelsShieldEnabled && !preferences.accessibilityLimitedMode
+                reelsShield.updatePreferences(preferences)
                 applyAccessibilityServiceInfo(preferences.accessibilityLimitedMode)
                 SharedMonitoringState.updateRestrictedPackages()
                 if (privateAppsChanged) {
@@ -277,6 +294,12 @@ class ZenithService : AccessibilityService() {
                 if (isFirstLoad) {
                     SharedMonitoringState.lastBankingAppsCount = preferences.lastBankingAppsCount
                     checkBankingAppsNotification()
+                }
+
+                if (preferences.accessibilityActiveNotificationEnabled && isServiceRunning) {
+                    showAccessibilityActivePersistentNotification()
+                } else {
+                    cancelAccessibilityActivePersistentNotification()
                 }
 
                 if (preferences.incentiveLockDisableRequestTimestamp > 0) {
@@ -350,9 +373,20 @@ class ZenithService : AccessibilityService() {
 
     @Volatile
     private var appliedLimitedMode: Boolean? = null
+    @Volatile
+    private var reelsTrackingWanted: Boolean = false
+    @Volatile
+    private var appliedReelsTracking: Boolean? = null
     private fun applyAccessibilityServiceInfo(limited: Boolean) {
-        if (appliedLimitedMode == limited) return
+        val reelsTracking = reelsTrackingWanted && !limited
+        if (appliedLimitedMode == limited && appliedReelsTracking == reelsTracking) return
+        appliedReelsTracking = reelsTracking
         appliedLimitedMode = limited
+        val scrollEvents = if (reelsTracking) {
+            AccessibilityEvent.TYPE_VIEW_SCROLLED or AccessibilityEvent.TYPE_VIEW_SELECTED
+        } else {
+            0
+        }
         val info = android.accessibilityservice.AccessibilityServiceInfo().apply {
             if (limited) {
                 flags = 0
@@ -364,7 +398,7 @@ class ZenithService : AccessibilityService() {
                         android.accessibilityservice.AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS
                 eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
                         AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED or
-                        AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+                        AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or scrollEvents
             }
             feedbackType = android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_GENERIC
             notificationTimeout = 100
@@ -376,6 +410,7 @@ class ZenithService : AccessibilityService() {
         monitoringJob = serviceScope.launch {
             while (true) {
                 if (!AppStateHolder.isScreenOn.value) {
+                    reelsShield.onScreenOff()
                     delay(30_000L)
                     continue
                 }
@@ -434,20 +469,39 @@ class ZenithService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         lastEventTime = System.currentTimeMillis()
         if (!AppStateHolder.isScreenOn.value) return
+        if (event.eventType == AccessibilityEvent.TYPE_VIEW_SELECTED) {
+            reelsShield.handleViewSelectedEvent(event)
+            return
+        }
 
         val now = System.currentTimeMillis()
         val isWindowState = event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
-        if (!isWindowState && now - lastA11yEventProcessedTime < 40) return
-        lastA11yEventProcessedTime = now
+        val isScrollEvent = event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED
+        if (!isWindowState && !isScrollEvent && now - lastA11yEventProcessedTime < 40) return
+        if (!isScrollEvent) lastA11yEventProcessedTime = now
 
         val packageName = event.packageName?.toString() ?: return
-        if (packageName == this.packageName) return
+        if (packageName == this.packageName) {
+            val ownActivityClass = event.className?.toString().orEmpty()
+            val isOwnActivityWindow = ownActivityClass in ownActivityClasses ||
+                (ownActivityClasses.isEmpty() && ownActivityClass.endsWith("Activity"))
+            if (isWindowState && isOwnActivityWindow) {
+                reelsShield.onForegroundChanged(packageName)
+            }
+            return
+        }
+        if (isScrollEvent) {
+            reelsShield.handleScrollEvent(event)
+            return
+        }
         if (SharedMonitoringState.isPrivatePackage(packageName)) {
             lastForegroundApp = packageName
             AppStateHolder.foregroundApp.value = packageName
+            reelsShield.onForegroundChanged(packageName)
             overlayManager.hideOverlay()
             return
         }
+
         if (SharedMonitoringState.accessibilityLimitedMode && !isWindowState) return
 
         val className = event.className?.toString() ?: ""
@@ -475,6 +529,7 @@ class ZenithService : AccessibilityService() {
                 handleViewTextChanged(packageName, event)
             }
         } else if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
+            reelsShield.onContentChanged(event, packageName)
             if (packageName == lastForegroundApp && com.etrisad.zenith.data.website.WebsiteRepository.isKnownBrowser(packageName)) {
                 var domain = websiteUrlTracker.checkAccessibilityEvent(event)
                 if (domain == null && now - lastContentChangeUrlCheck > 1000) {
@@ -494,11 +549,16 @@ class ZenithService : AccessibilityService() {
 
     private fun handleWindowStateChanged(packageName: String, event: AccessibilityEvent) {
         val now = System.currentTimeMillis()
+        reelsShield.onForegroundChanged(
+            packageName,
+            event.className?.toString(),
+            event.text?.joinToString(" ")
+        )
+
         val lastPkgTime = lastA11yPackageTime[packageName] ?: 0L
         if (now - lastPkgTime < 150) return
         if (lastA11yPackageTime.size > 500) lastA11yPackageTime.clear()
         lastA11yPackageTime[packageName] = now
-
 
         if (packageName !in SharedMonitoringState.CRITICAL_SYSTEM_PACKAGES && !isKeyboardApp(packageName)) {
             lastForegroundApp = packageName
@@ -728,8 +788,61 @@ class ZenithService : AccessibilityService() {
         } catch (_: Exception) {}
     }
 
+    private var isAccessibilityActiveNotifPosted = false
+
+    private fun showAccessibilityActivePersistentNotification() {
+        val channelId = "zenith_accessibility_active_channel"
+        if (notificationManager.getNotificationChannel(channelId) == null) {
+            val channel = NotificationChannel(
+                channelId, "Accessibility Active Warning", NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Persistent reminder when Zenith accessibility service is active"
+                setSound(null, null)
+                enableVibration(false)
+            }
+            notificationManager.createNotificationChannel(channel)
+        }
+
+        val openSettingsIntent = android.content.Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+
+        val notification = NotificationCompat.Builder(this, channelId)
+            .setContentTitle("Zenith Accessibility Active")
+            .setContentText("Please disable Zenith accessibility before opening sensitive apps to avoid unexpected restrictions.")
+            .setSmallIcon(R.drawable.ic_warning)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setSound(null)
+            .setVibrate(longArrayOf(0L))
+            .setOngoing(true)
+            .setAutoCancel(false)
+            .setContentIntent(
+                PendingIntent.getActivity(
+                    this, 3004, openSettingsIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                )
+            )
+            .build()
+
+        try {
+            if (!isAccessibilityActiveNotifPosted) {
+                notificationManager.notify(3004, notification)
+                isAccessibilityActiveNotifPosted = true
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun cancelAccessibilityActivePersistentNotification() {
+        if (isAccessibilityActiveNotifPosted) {
+            try {
+                notificationManager.cancel(3004)
+            } catch (_: Exception) {}
+            isAccessibilityActiveNotifPosted = false
+        }
+    }
+
     private suspend fun handlePackageChange(currentApp: String) {
         OverlayLogBuffer.d("Zenith_HPC", "handlePackageChange: $currentApp (lfga=$lastForegroundApp, isShowing=${InterceptOverlayManager.isShowing})")
+        reelsShield.onForegroundChanged(currentApp)
         if (SharedMonitoringState.isPrivatePackage(currentApp)) return
         val actualPkg = if (SharedMonitoringState.accessibilityLimitedMode) {
             null
@@ -1632,11 +1745,13 @@ class ZenithService : AccessibilityService() {
     override fun onDestroy() {
         super.onDestroy()
         isServiceRunning = false
+        cancelAccessibilityActivePersistentNotification()
         bypassCheckRunnable?.let { mainHandler.removeCallbacks(it) }
         bypassCheckRunnable = null
         try {
             overlayManager.hideOverlay()
             overlayManager.destroy()
+            reelsShield.destroy()
             sessionUsageOverlayManager.destroy()
         } catch (_: Exception) {}
         serviceJob.cancel()

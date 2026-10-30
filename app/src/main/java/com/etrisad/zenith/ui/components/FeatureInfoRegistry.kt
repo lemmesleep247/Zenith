@@ -13,6 +13,7 @@ object FeatureInfoRegistry {
         route == Screen.Alarm.route -> alarm
         route == Screen.GracePeriod.route -> gracePeriod
         route == Screen.EyeCare.route -> eyeCare
+        route == Screen.ReelsShield.route -> reelsShield
         route?.startsWith("app_detail") == true -> appDetail
         route == Screen.Lockdown.route -> lockdown
         route == Screen.TamperProtection.route -> tamperProtection
@@ -209,6 +210,31 @@ object FeatureInfoRegistry {
                 "Classic guidance is ~20 minutes of work followed by ~20 seconds looking away, both sliders let you adapt it.",
                 "Sliders commit on release, so drag freely until the value feels right.",
                 "The break overlay is intentionally unskippable, that's the point."
+            )
+        )
+    )
+
+    private val reelsShield = FeatureInfo(
+        title = "Reels Shield",
+        summary = "One shared daily limit for short videos, optional per-app limits, and an automatic back-press when a limit is reached. Apps are categorized as fully supported, partial support, or untested based on detection accuracy.",
+        sections = listOf(
+            FeatureInfoSections.whatItDoes(
+                "Counts short videos watched across tracked apps, with every short-video feed sharing the same daily limit.",
+                "Fully supported apps offer precise detection, whereas partial support apps may occasionally miss or over-count swipes on secondary screens like comment sections or post details.",
+                "Untested apps are tracked normally, but their detection logic has not been specifically fine-tuned.",
+                "Shares a single daily limit across all tracked apps while maintaining a per-app breakdown of today's videos.",
+                "Allows setting individual app limits below the shared limit, enforcing whichever limit is stricter.",
+                "Presses back automatically when opening or scrolling short videos once the shared limit or an app limit is reached."
+            ),
+            FeatureInfoSections.whatYoullSee(
+                "A visual progress ring showing remaining videos, alongside stat cards for today's usage, active apps, total lifetime count, and shield status.",
+                "Text inputs for setting limits, including the shared daily limit and individual app caps in a per-app usage list.",
+                "A tracked-app selector and a 14-day history chart showing daily usage broken down by app."
+            ),
+            FeatureInfoSections.tips(
+                "Zenith's accessibility service must be active, as scroll detection requires full accessibility mode.",
+                "Detection algorithms only track short-video feeds, never home feeds, comments, or post descriptions.",
+                "Lowering the shared limit on busy days automatically tightens per-app caps. The floating overlay displays your remaining limit and current session count."
             )
         )
     )
