@@ -365,6 +365,9 @@ val ACHIEVEMENT_BANNERS_SEEN = stringPreferencesKey("achievement_banners_seen")
         val EYE_CARE_REST_SECONDS = intPreferencesKey("eye_care_rest_seconds")
         val USAGE_GLIMPSE_ENABLED = booleanPreferencesKey("usage_glimpse_enabled")
         val WEBSITE_AUTO_TRACKING = booleanPreferencesKey("website_auto_tracking")
+        val WEBSITE_BLOCKER_ENABLED = booleanPreferencesKey("website_blocker_enabled")
+        val WEBSITE_BLOCKER_BLOCK_ADULT = booleanPreferencesKey("website_blocker_block_adult")
+        val WEBSITE_BLOCKER_KEYWORDS = stringPreferencesKey("website_blocker_keywords")
         val LAST_BANKING_APPS_COUNT = intPreferencesKey("last_banking_apps_count")
         val ACCESSIBILITY_ACTIVE_NOTIFICATION_ENABLED = booleanPreferencesKey("accessibility_active_notification_enabled")
 
@@ -678,6 +681,11 @@ achievementBannersSeen = settings[PreferencesKeys.ACHIEVEMENT_BANNERS_SEEN] ?: "
             dayStartMinute = settings[PreferencesKeys.DAY_START_MINUTE] ?: 0,
             usageGlimpseEnabled = settings[PreferencesKeys.USAGE_GLIMPSE_ENABLED] ?: false,
             websiteAutoTrackingEnabled = settings[PreferencesKeys.WEBSITE_AUTO_TRACKING] ?: false,
+            websiteBlockerEnabled = settings[PreferencesKeys.WEBSITE_BLOCKER_ENABLED] ?: false,
+            websiteBlockerBlockAdult = settings[PreferencesKeys.WEBSITE_BLOCKER_BLOCK_ADULT] ?: true,
+            websiteBlockerKeywords = settings[PreferencesKeys.WEBSITE_BLOCKER_KEYWORDS]
+                ?.let { parseKeywordList(it) }
+                ?: emptyList(),
             lastBankingAppsCount = settings[PreferencesKeys.LAST_BANKING_APPS_COUNT] ?: -1,
             accessibilityActiveNotificationEnabled = settings[PreferencesKeys.ACCESSIBILITY_ACTIVE_NOTIFICATION_ENABLED] ?: true,
             incentiveLockDisableRequestTimestamp = runtime[RuntimeKeys.INCENTIVE_LOCK_DISABLE_REQUEST_TIMESTAMP] ?: 0L,
@@ -1264,6 +1272,24 @@ achievementBannersSeen = settings[PreferencesKeys.ACHIEVEMENT_BANNERS_SEEN] ?: "
 
     suspend fun setWebsiteAutoTrackingEnabled(enabled: Boolean) {
         context.dataStore.edit { preferences -> preferences[PreferencesKeys.WEBSITE_AUTO_TRACKING] = enabled }
+    }
+
+    suspend fun setWebsiteBlockerEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences -> preferences[PreferencesKeys.WEBSITE_BLOCKER_ENABLED] = enabled }
+    }
+
+    suspend fun setWebsiteBlockerBlockAdult(enabled: Boolean) {
+        context.dataStore.edit { preferences -> preferences[PreferencesKeys.WEBSITE_BLOCKER_BLOCK_ADULT] = enabled }
+    }
+
+    suspend fun setWebsiteBlockerKeywords(keywords: List<String>) {
+        val cleaned = keywords
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.WEBSITE_BLOCKER_KEYWORDS] = cleaned.joinToString("\n")
+        }
     }
 
     suspend fun setIncentiveLockDisableRequestTimestamp(timestamp: Long) {
@@ -2297,14 +2323,8 @@ achievementBannersSeen = settings[PreferencesKeys.ACHIEVEMENT_BANNERS_SEEN] ?: "
 const val MAX_REELS_SHIELD_DAILY_LIMIT = 200
 
 object RedirectShieldDefaults {
-    /**
-     * How long the shield stays armed after leaving a trigger app. Ad redirects often
-     * pass through a browser or the ad SDK before the store opens, so the window has
-     * to outlast that chain.
-     */
     const val ARM_GRACE_PERIOD_MS = 15000L
 
-    /** Minimum delay between two redirects so the service cannot loop. */
     const val REDIRECT_COOLDOWN_MS = 2000L
 }
 
@@ -2313,9 +2333,12 @@ object ReelsShieldDefaults {
 
     val PACKAGES: Set<String> = setOf(
         "com.instagram.android",
+        "com.instagram.lite",
         "com.facebook.katana",
         "com.facebook.lite",
         "com.google.android.youtube",
+        "app.revanced.android.youtube",
+        "app.morphe.android.youtube",
         "com.snapchat.android",
         "com.zhiliaoapp.musically",
         "com.zhiliaoapp.musically.go",
@@ -2331,15 +2354,18 @@ object ReelsShieldDefaults {
 
     val FULLY_SUPPORTED_PACKAGES: Set<String> = setOf(
         "com.instagram.android",
-        "com.google.android.youtube"
-    )
-
-    val PARTIAL_PACKAGES: Set<String> = setOf(
-        "com.facebook.lite",
+        "com.google.android.youtube",
         "com.zhiliaoapp.musically",
         "com.zhiliaoapp.musically.go",
         "com.ss.android.ugc.trill",
         "com.ss.android.ugc.aweme"
+    )
+
+    val PARTIAL_PACKAGES: Set<String> = setOf(
+        "com.instagram.lite",
+        "app.revanced.android.youtube",
+        "app.morphe.android.youtube",
+        "com.facebook.lite"
     )
 
     val UNTESTED_PACKAGES: Set<String> = setOf(
@@ -2364,7 +2390,9 @@ object ReelsShieldDefaults {
 
     fun fallbackLabel(pkg: String): String = when (pkg) {
         "com.instagram.android" -> "Instagram"
+        "com.instagram.lite" -> "Instagram Lite"
         "com.google.android.youtube" -> "YouTube"
+        "app.revanced.android.youtube", "app.morphe.android.youtube" -> "YouTube"
         "com.facebook.katana", "com.facebook.lite" -> "Facebook"
         "com.snapchat.android" -> "Snapchat"
         "com.zhiliaoapp.musically", "com.zhiliaoapp.musically.go",
@@ -2389,6 +2417,12 @@ object HomeQuickActionsDefaults {
         "pause_point"
     )
 }
+
+private fun parseKeywordList(raw: String): List<String> =
+    raw.split('\n')
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .distinct()
 
 private fun parseCountMap(raw: String): Map<String, Int> {
     if (raw.isEmpty()) return emptyMap()
@@ -2607,6 +2641,9 @@ data class UserPreferences(
     val dayStartMinute: Int = 0,
     val usageGlimpseEnabled: Boolean = false,
     val websiteAutoTrackingEnabled: Boolean = false,
+    val websiteBlockerEnabled: Boolean = false,
+    val websiteBlockerBlockAdult: Boolean = true,
+    val websiteBlockerKeywords: List<String> = emptyList(),
     val lastBankingAppsCount: Int = -1,
     val accessibilityActiveNotificationEnabled: Boolean = true,
     val overlayPaletteId: String = "dynamic",

@@ -24,6 +24,7 @@ import com.etrisad.zenith.data.local.database.OverlayLogBuffer
 import com.etrisad.zenith.data.preferences.UserPreferences
 import com.etrisad.zenith.data.preferences.UserPreferencesRepository
 import com.etrisad.zenith.data.repository.ShieldRepository
+import com.etrisad.zenith.data.website.WebsiteBlocker
 import com.etrisad.zenith.data.website.WebsiteRepository
 import com.etrisad.zenith.data.website.WebsiteStateHolder
 import com.etrisad.zenith.ui.components.overlay.ReelsShieldOverlayManager
@@ -80,12 +81,15 @@ class ZenithService : AccessibilityService() {
     private var monitoringJob: kotlinx.coroutines.Job? = null
     private var bypassCheckRunnable: Runnable? = null
     private val websiteUrlTracker = WebsiteUrlTracker(this)
+    private val websiteBlocker = WebsiteBlocker()
     private val redirectShield = RedirectShieldController()
     private var urlPollJob: kotlinx.coroutines.Job? = null
     @Volatile
     private var isOverlayCheckInProgress = false
 
     private var lastCheckedWebsiteDomain: String? = null
+    private var lastWebsiteBlockKey = ""
+    private var lastWebsiteBlockAt = 0L
 
     private var cachedTotalGlobalUsage: Long = 0L
     private var lastGlobalUsageCacheTime: Long = 0L
@@ -105,6 +109,7 @@ class ZenithService : AccessibilityService() {
         private var instance: ZenithService? = null
         const val BEDTIME_CHANNEL_ID = "zenith_bedtime_channel"
         const val WIND_DOWN_NOTIFICATION_ID = 2006
+        private const val WEBSITE_BLOCK_COOLDOWN_MS = 2_000L
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -286,6 +291,7 @@ class ZenithService : AccessibilityService() {
                 SharedMonitoringState.storeInterceptedNotificationContent = preferences.storeInterceptedNotificationContent
                 reelsTrackingWanted = preferences.reelsShieldEnabled && !preferences.accessibilityLimitedMode
                 reelsShield.updatePreferences(preferences)
+                websiteBlocker.updatePreferences(preferences)
                 redirectShield.updatePreferences(preferences)
                 applyAccessibilityServiceInfo(preferences.accessibilityLimitedMode)
                 SharedMonitoringState.updateRestrictedPackages()
@@ -494,6 +500,7 @@ class ZenithService : AccessibilityService() {
             return
         }
         if (isScrollEvent) {
+            reelsShield.handleScriptEvent(event)
             reelsShield.handleScrollEvent(event)
             return
         }
@@ -532,6 +539,7 @@ class ZenithService : AccessibilityService() {
                 handleViewTextChanged(packageName, event)
             }
         } else if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
+            reelsShield.handleScriptEvent(event)
             reelsShield.onContentChanged(event, packageName)
             if (packageName == lastForegroundApp && com.etrisad.zenith.data.website.WebsiteRepository.isKnownBrowser(packageName)) {
                 var domain = websiteUrlTracker.checkAccessibilityEvent(event)
@@ -697,7 +705,11 @@ class ZenithService : AccessibilityService() {
             overlayActionHandler.restoreBrowserFromWebsite()
         }
         WebsiteStateHolder.currentWebsiteDomain.value = domain
+        WebsiteStateHolder.currentWebsiteIdentifier.value =
+            domain?.let { resolveWebsiteIdentifier(it) }
         if (domain != null) {
+            val identifier = WebsiteStateHolder.currentWebsiteIdentifier.value ?: domain
+            if (enforceWebsiteBlocker(domain, identifier)) return
             val websitePkg = "zenith-web:$domain"
             overlayActionHandler.cancelWebsiteSessionDismiss(websitePkg)
             checkAndRedirectBlockedUrl(domain)
@@ -707,6 +719,59 @@ class ZenithService : AccessibilityService() {
                 WebsiteStateHolder.recordWebsiteSessionStart(websitePkg)
             }
         }
+    }
+
+    private fun resolveWebsiteIdentifier(domain: String): String {
+        val tracked = websiteUrlTracker.currentSiteIdentifier()
+        return if (tracked != null &&
+            (tracked == domain || tracked.startsWith("$domain/"))
+        ) {
+            tracked
+        } else {
+            domain
+        }
+    }
+
+    private fun enforceWebsiteBlocker(domain: String, urlIdentifier: String): Boolean {
+        val reason = websiteBlocker.blockReason(domain, urlIdentifier) ?: return false
+        val now = System.currentTimeMillis()
+        val key = urlIdentifier.lowercase()
+        if (key == lastWebsiteBlockKey && now - lastWebsiteBlockAt < WEBSITE_BLOCK_COOLDOWN_MS) {
+            return true
+        }
+        lastWebsiteBlockKey = key
+        lastWebsiteBlockAt = now
+        OverlayLogBuffer.d("WebsiteBlocker", "blocked $urlIdentifier ($reason)")
+
+        val websitePkg = "zenith-web:$domain"
+        if (SharedMonitoringState.allShieldsCache[websitePkg] == null) {
+            val websiteShield = ShieldEntity(
+                packageName = websitePkg,
+                appName = WebsiteRepository.getDisplayName(domain, "https://$domain"),
+                type = FocusType.SHIELD,
+                timeLimitMinutes = 0,
+                isWebsite = true,
+                url = domain,
+                isAutoQuitEnabled = true,
+            )
+            SharedMonitoringState.allShieldsCache =
+                SharedMonitoringState.allShieldsCache + (websitePkg to websiteShield)
+            SharedMonitoringState.updateRestrictedPackages()
+        }
+
+        val message = if (reason == WebsiteBlocker.REASON_ADULT) {
+            "Adult website blocked by Zenith"
+        } else {
+            "Website blocked by Zenith"
+        }
+        mainHandler.post {
+            android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show()
+        }
+        try {
+            WebsiteRepository.redirectBrowserToBlankPage(this)
+        } catch (_: Exception) {
+        }
+        return true
     }
 
     private fun checkAndRedirectBlockedUrl(domain: String) {
@@ -1518,14 +1583,6 @@ class ZenithService : AccessibilityService() {
         "not_armed"
     )
 
-    /**
-     * Sends the user back to the app they came from after a shielded app was bounced.
-     *
-     * The bounce waits briefly so the shielded activity finishes opening, then walks
-     * back with BACK, which returns to the app underneath it. If that did not land on
-     * [packageName] (because the shielded app opened as its own task), the previous app
-     * is launched explicitly, with the home screen as the last resort.
-     */
     private fun returnToPreviousApp(packageName: String?) {
         val target = packageName?.takeIf { it != this.packageName }
         serviceScope.launch(Dispatchers.Main) {

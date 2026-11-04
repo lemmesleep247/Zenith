@@ -72,6 +72,8 @@ fun FeaturesSettings(
     onIncentiveLockCancelDisableRequest: () -> Unit,
     onNavigateToGracePeriod: () -> Unit,
     onWebsiteAutoTrackingEnabledChange: (Boolean) -> Unit,
+    onWebsiteBlockerBlockAdultChange: (Boolean) -> Unit,
+    onWebsiteBlockerKeywordsChange: (List<String>) -> Unit,
     onNavigateToLockdown: () -> Unit,
     onNavigateToTamperProtection: () -> Unit,
     onNavigateToPomodoro: () -> Unit,
@@ -94,6 +96,15 @@ fun FeaturesSettings(
     val calendarPermissionGranted = remember { hasCalendarPermission(context) }
     var showConfirmSheet by remember { mutableStateOf(false) }
     var showGatewayDefaultsSheet by remember { mutableStateOf(false) }
+    var showKeywordsSheet by remember { mutableStateOf(false) }
+
+    if (showKeywordsSheet) {
+        WebsiteBlockerKeywordsBottomSheet(
+            initialKeywords = preferences.websiteBlockerKeywords,
+            onDismiss = { showKeywordsSheet = false },
+            onSave = onWebsiteBlockerKeywordsChange
+        )
+    }
 
     if (showGatewayDefaultsSheet) {
         MindfulGatewayDefaultsBottomSheet(
@@ -485,7 +496,7 @@ fun FeaturesSettings(
         )
 
         Spacer(modifier = Modifier.height(16.dp))
-        PreferenceCategory(title = "Website Tracking")
+        PreferenceCategory(title = "Website")
 
         Box(modifier = Modifier.onboardingAnchor("features.website_tracking")) {
             SettingsToggle(
@@ -494,9 +505,30 @@ fun FeaturesSettings(
                 checked = preferences.websiteAutoTrackingEnabled,
                 onCheckedChange = onWebsiteAutoTrackingEnabledChange,
                 icon = Icons.Outlined.Language,
-                shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp, bottomStart = 24.dp, bottomEnd = 24.dp)
+                shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp, bottomStart = 8.dp, bottomEnd = 8.dp)
             )
         }
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        SettingsToggle(
+            title = "Block Adult Websites",
+            description = "Automatically block known adult content websites",
+            checked = preferences.websiteBlockerBlockAdult,
+            onCheckedChange = onWebsiteBlockerBlockAdultChange,
+            icon = Icons.Outlined.Security,
+            shape = RoundedCornerShape(8.dp)
+        )
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        SettingsActionItem(
+            title = "Blocked Keywords & Patterns",
+            summary = "${preferences.websiteBlockerKeywords.size} custom keywords/patterns configured",
+            onClick = { showKeywordsSheet = true },
+            icon = Icons.Outlined.Description,
+            shape = RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp, bottomStart = 24.dp, bottomEnd = 24.dp)
+        )
     }
 }
 

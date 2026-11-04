@@ -5,6 +5,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 object WebsiteStateHolder {
     val currentWebsiteDomain = MutableStateFlow<String?>(null)
+    val currentWebsiteIdentifier = MutableStateFlow<String?>(null)
     @Volatile
     var lastBrowserPackage: String? = null
 

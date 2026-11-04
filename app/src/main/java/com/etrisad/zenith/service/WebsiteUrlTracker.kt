@@ -10,6 +10,10 @@ import java.util.ArrayDeque
 class WebsiteUrlTracker(
     private val service: AccessibilityService,
 ) {
+    @Volatile private var lastSiteIdentifier: String? = null
+
+    fun currentSiteIdentifier(): String? = lastSiteIdentifier
+
     fun getUrlBarViewIds(packageName: String): List<String> {
         val known = URL_BAR_ID_LIST[packageName]
         if (known != null) return listOf(known.displayUrlBarId)
@@ -292,6 +296,7 @@ class WebsiteUrlTracker(
         val tld = parts.lastOrNull() ?: ""
         if (tld.isEmpty() || !tld.any { it.isLetter() }) return null
 
+        lastSiteIdentifier = WebsiteRepository.extractSiteIdentifier(urlText).urlIdentifier
         return domain
     }
 
